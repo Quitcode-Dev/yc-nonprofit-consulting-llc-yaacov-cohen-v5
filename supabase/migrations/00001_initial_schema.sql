@@ -229,6 +229,23 @@ CREATE INDEX idx_feedback_organization_id ON feedback(organization_id);
 CREATE INDEX idx_import_logs_organization_id ON import_logs(organization_id);
 
 -- ============================================================================
+-- HELPER FUNCTION: check super_admin without triggering RLS on profiles
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION is_super_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM profiles
+        WHERE id = auth.uid() AND role = 'super_admin'
+    );
+$$;
+
+-- ============================================================================
 -- ROW LEVEL SECURITY
 -- ============================================================================
 
@@ -256,44 +273,44 @@ CREATE POLICY "Users can read own profile"
     FOR SELECT
     USING (auth.uid() = id);
 
--- profiles: super_admin can read all profiles
+-- profiles: super_admin can read all profiles (uses SECURITY DEFINER helper to avoid recursion)
 CREATE POLICY "Super admins can read all profiles"
     ON profiles
     FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin());
 
 -- profiles: users can update their own row
 CREATE POLICY "Users can update own profile"
     ON profiles
     FOR UPDATE
-    USING (auth.uid() = id);
+    USING (auth.uid() = id)
+    WITH CHECK (auth.uid() = id);
 
--- profiles: super_admin can manage all profiles
-CREATE POLICY "Super admins can manage all profiles"
+-- profiles: super_admin can insert profiles (uses SECURITY DEFINER helper to avoid recursion)
+CREATE POLICY "Super admins can insert profiles"
     ON profiles
-    FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    FOR INSERT
+    WITH CHECK (is_super_admin());
+
+-- profiles: super_admin can update all profiles (uses SECURITY DEFINER helper to avoid recursion)
+CREATE POLICY "Super admins can update all profiles"
+    ON profiles
+    FOR UPDATE
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
+
+-- profiles: super_admin can delete profiles (uses SECURITY DEFINER helper to avoid recursion)
+CREATE POLICY "Super admins can delete profiles"
+    ON profiles
+    FOR DELETE
+    USING (is_super_admin());
 
 -- organizations: super_admin can manage all
 CREATE POLICY "Super admins can manage organizations"
     ON organizations
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- organizations: org members can read their own org
 CREATE POLICY "Org members can read their organization"
@@ -312,12 +329,8 @@ CREATE POLICY "Org members can read their organization"
 CREATE POLICY "Super admins can manage organization_users"
     ON organization_users
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- organization_users: members can read their own org's users
 CREATE POLICY "Org members can read their organization_users"
@@ -336,12 +349,8 @@ CREATE POLICY "Org members can read their organization_users"
 CREATE POLICY "Super admins can manage donors"
     ON donors
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- donors: org members can read their org's donors
 CREATE POLICY "Org members can read their donors"
@@ -360,12 +369,8 @@ CREATE POLICY "Org members can read their donors"
 CREATE POLICY "Super admins can manage donations"
     ON donations
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- donations: org members can read their org's donations
 CREATE POLICY "Org members can read their donations"
@@ -384,12 +389,8 @@ CREATE POLICY "Org members can read their donations"
 CREATE POLICY "Super admins can manage moves"
     ON moves
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- moves: org members can read their org's moves
 CREATE POLICY "Org members can read their moves"
@@ -408,12 +409,8 @@ CREATE POLICY "Org members can read their moves"
 CREATE POLICY "Super admins can manage move_ideas"
     ON move_ideas
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- move_ideas: org members can read global + their org's move ideas
 CREATE POLICY "Org members can read move_ideas"
@@ -433,12 +430,8 @@ CREATE POLICY "Org members can read move_ideas"
 CREATE POLICY "Super admins can manage scoring_configs"
     ON scoring_configs
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- scoring_configs: org members can read their org's config
 CREATE POLICY "Org members can read their scoring_configs"
@@ -457,12 +450,8 @@ CREATE POLICY "Org members can read their scoring_configs"
 CREATE POLICY "Super admins can manage tier_configs"
     ON tier_configs
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- tier_configs: org members can read their org's tiers
 CREATE POLICY "Org members can read their tier_configs"
@@ -481,12 +470,8 @@ CREATE POLICY "Org members can read their tier_configs"
 CREATE POLICY "Super admins can manage score_band_configs"
     ON score_band_configs
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- score_band_configs: org members can read their org's bands
 CREATE POLICY "Org members can read their score_band_configs"
@@ -505,12 +490,8 @@ CREATE POLICY "Org members can read their score_band_configs"
 CREATE POLICY "Super admins can manage feedback"
     ON feedback
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- feedback: users can read their own feedback
 CREATE POLICY "Users can read own feedback"
@@ -528,12 +509,8 @@ CREATE POLICY "Users can insert own feedback"
 CREATE POLICY "Super admins can manage import_logs"
     ON import_logs
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- import_logs: org members can read their org's logs
 CREATE POLICY "Org members can read their import_logs"
@@ -552,12 +529,8 @@ CREATE POLICY "Org members can read their import_logs"
 CREATE POLICY "Super admins can manage integrations"
     ON integrations
     FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles AS p
-            WHERE p.id = auth.uid() AND p.role = 'super_admin'
-        )
-    );
+    USING (is_super_admin())
+    WITH CHECK (is_super_admin());
 
 -- integrations: org members can read their org's integrations
 CREATE POLICY "Org members can read their integrations"
