@@ -8,7 +8,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, auth
 AS $$
   SELECT EXISTS (
     SELECT 1
@@ -24,7 +24,7 @@ RETURNS SETOF uuid
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, auth
 AS $$
   SELECT organization_id
   FROM public.organization_users
