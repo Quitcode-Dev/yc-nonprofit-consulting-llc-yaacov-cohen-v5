@@ -5,12 +5,13 @@
 -- Helper function: check if the current auth user is a super_admin
 -- NOTE: This function queries profiles. Do NOT use it in RLS policies
 -- on the profiles table itself to avoid infinite recursion.
+-- SECURITY DEFINER ensures this function bypasses RLS when reading profiles.
 CREATE OR REPLACE FUNCTION public.is_super_admin()
 RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public, auth
+SET search_path = public, auth, extensions
 AS $$
   SELECT COALESCE(
     (SELECT is_super_admin
@@ -23,12 +24,13 @@ $$;
 -- Helper function: get the organization_id(s) for the current auth user
 -- NOTE: This function queries organization_users. Do NOT use it in RLS
 -- policies on the organization_users table itself to avoid infinite recursion.
+-- SECURITY DEFINER ensures this function bypasses RLS when reading organization_users.
 CREATE OR REPLACE FUNCTION public.user_organization_ids()
 RETURNS SETOF uuid
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public, auth
+SET search_path = public, auth, extensions
 AS $$
   SELECT organization_id
   FROM public.organization_users
@@ -44,6 +46,8 @@ $$;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 -- Super Admin: full access to all profiles (inlined check to avoid recursion)
+-- PostgreSQL evaluates subqueries on the same table within a policy without
+-- re-applying that policy, so this self-referencing pattern is safe.
 CREATE POLICY "super_admin_all_profiles"
   ON public.profiles
   FOR ALL
@@ -81,7 +85,7 @@ CREATE POLICY "users_update_own_profile"
 -- ============================================================
 ALTER TABLE public.organization_users ENABLE ROW LEVEL SECURITY;
 
--- Super Admin: full access (uses is_super_admin which reads profiles, not this table)
+-- Super Admin: full access (uses is_super_admin which reads profiles, not this table — safe)
 CREATE POLICY "super_admin_all_organization_users"
   ON public.organization_users
   FOR ALL
@@ -89,6 +93,8 @@ CREATE POLICY "super_admin_all_organization_users"
   WITH CHECK (public.is_super_admin());
 
 -- Org members can see other members in their organization (inlined to avoid recursion)
+-- PostgreSQL evaluates subqueries on the same table within a policy without
+-- re-applying that policy, so this self-referencing pattern is safe.
 CREATE POLICY "org_members_select_organization_users"
   ON public.organization_users
   FOR SELECT
