@@ -27,6 +27,7 @@ export interface CurrentUser {
     invited_email: string | null;
     invitation_token: string | null;
     invitation_expires_at: string | null;
+    joined_at: string | null;
     created_at: string;
   } | null;
 }
