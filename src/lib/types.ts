@@ -3,6 +3,7 @@
 export enum UserRole {
   SUPER_ADMIN = "super_admin",
   ORG_ADMIN = "org_admin",
+  SOLICITOR = "solicitor",
   FUNDRAISER = "fundraiser",
   VIEWER = "viewer",
 }
@@ -10,6 +11,7 @@ export enum UserRole {
 export enum OrganizationUserStatus {
   ACTIVE = "active",
   INVITED = "invited",
+  PENDING = "pending",
   DISABLED = "disabled",
 }
 
