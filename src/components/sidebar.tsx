@@ -30,6 +30,12 @@ const navItemsByRole: Record<string, NavItem[]> = {
     { label: "My Moves", href: "/my-moves" },
     { label: "Calendar", href: "/calendar" },
   ],
+  solicitor: [
+    { label: "Dashboard", href: "/dashboard" },
+    { label: "My Donors", href: "/my-donors" },
+    { label: "My Moves", href: "/my-moves" },
+    { label: "Calendar", href: "/calendar" },
+  ],
   viewer: [
     { label: "Dashboard", href: "/dashboard" },
   ],
