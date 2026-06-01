@@ -1,15 +1,33 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createServerClient } from "@/lib/supabase/server";
-import type { Profile, OrganizationUser } from "@/lib/types";
 
 export interface CurrentUser {
   user: {
     id: string;
     email: string;
   };
-  profile: Profile | null;
-  organizationUser: OrganizationUser | null;
+  profile: {
+    id: string;
+    first_name: string | null;
+    last_name: string | null;
+    email: string | null;
+    role: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  } | null;
+  organizationUser: {
+    id: string;
+    organization_id: string;
+    user_id: string;
+    role: string;
+    status: string;
+    invited_email: string | null;
+    invitation_token: string | null;
+    invitation_expires_at: string | null;
+    created_at: string;
+  } | null;
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
@@ -48,9 +66,11 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 }
 
 export function getUserRole(currentUser: CurrentUser): string {
-  if (currentUser.profile?.is_super_admin) {
+  // Check profile-level role for super_admin
+  if (currentUser.profile?.role === "super_admin") {
     return "super_admin";
   }
+  // Check organization-level role
   if (currentUser.organizationUser?.role) {
     return currentUser.organizationUser.role;
   }
@@ -89,7 +109,7 @@ export async function requireOrganizationAccess(
   }
 
   // Super Admins bypass organization access checks
-  if (currentUser.profile?.is_super_admin) {
+  if (currentUser.profile?.role === "super_admin") {
     return currentUser;
   }
 
@@ -121,7 +141,7 @@ export async function getUserOrganizationId(): Promise<string | null> {
   }
 
   // Super Admins may impersonate an organization via cookie
-  if (currentUser.profile?.is_super_admin) {
+  if (currentUser.profile?.role === "super_admin") {
     const cookieStore = await cookies();
     const impersonatedOrgId = cookieStore.get("x-org-id")?.value;
     if (impersonatedOrgId) {
@@ -134,7 +154,7 @@ export async function getUserOrganizationId(): Promise<string | null> {
 }
 
 /**
- * Verifies that the current user (solicitor/fundraiser) has access to the
+ * Verifies that the current user (solicitor) has access to the
  * specified donor. The donor's assigned_solicitor_id must match the current
  * user's id. Super Admins and Org Admins bypass this check.
  *
@@ -152,18 +172,16 @@ export async function requireSolicitorDonorAccess(
   }
 
   // Super Admins bypass donor access checks
-  if (currentUser.profile?.is_super_admin) {
+  if (currentUser.profile?.role === "super_admin") {
     return currentUser;
   }
 
   // Org Admins bypass donor access checks
-  if (
-    currentUser.organizationUser?.role === "org_admin"
-  ) {
+  if (currentUser.organizationUser?.role === "org_admin") {
     return currentUser;
   }
 
-  // For solicitors (fundraisers) and other roles, verify assignment
+  // For solicitors and other roles, verify assignment
   const supabase = await createServerClient();
 
   const { data: donor, error } = await supabase
