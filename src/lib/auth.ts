@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createServerClient } from "@/lib/supabase/server";
 import type { Profile, OrganizationUser } from "@/lib/types";
 
@@ -70,4 +71,64 @@ export async function requireRole(allowedRoles: string[]): Promise<CurrentUser> 
   }
 
   return currentUser;
+}
+
+/**
+ * Verifies that the current user has access to the specified organization.
+ * Super Admins bypass this check entirely.
+ * Returns the CurrentUser if access is granted.
+ * Throws a Response with 403 status if the user does not belong to the organization.
+ */
+export async function requireOrganizationAccess(
+  organizationId: string
+): Promise<CurrentUser> {
+  const currentUser = await getCurrentUser();
+
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  // Super Admins bypass organization access checks
+  if (currentUser.profile?.is_super_admin) {
+    return currentUser;
+  }
+
+  // Verify the user belongs to the requested organization
+  if (
+    !currentUser.organizationUser ||
+    currentUser.organizationUser.organization_id !== organizationId
+  ) {
+    throw new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  return currentUser;
+}
+
+/**
+ * Returns the organization_id for the current user.
+ * For Super Admins, checks for an impersonated org ID from a cookie
+ * named "x-org-id". Falls back to the user's own organization_users record.
+ * Returns null if no organization is associated.
+ */
+export async function getUserOrganizationId(): Promise<string | null> {
+  const currentUser = await getCurrentUser();
+
+  if (!currentUser) {
+    return null;
+  }
+
+  // Super Admins may impersonate an organization via cookie
+  if (currentUser.profile?.is_super_admin) {
+    const cookieStore = await cookies();
+    const impersonatedOrgId = cookieStore.get("x-org-id")?.value;
+    if (impersonatedOrgId) {
+      return impersonatedOrgId;
+    }
+    // Fall through to the user's own org membership if no impersonation cookie
+  }
+
+  return currentUser.organizationUser?.organization_id ?? null;
 }
