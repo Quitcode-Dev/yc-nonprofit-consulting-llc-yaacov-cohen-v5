@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { login } from "./actions";
+import { createBrowserClient } from "@/lib/supabase/client";
+import { getUserRole } from "./actions";
 
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,12 +22,26 @@ export default function LoginPage() {
     setError(null);
 
     const formData = new FormData(e.currentTarget);
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
 
     startTransition(async () => {
-      const result = await login(formData);
+      const supabase = createBrowserClient();
+
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) {
+        setError("Invalid email or password");
+        return;
+      }
+
+      const result = await getUserRole();
 
       if (!result.success) {
-        setError(result.error ?? "Invalid email or password");
+        setError(result.error ?? "Unable to retrieve user profile");
         return;
       }
 
