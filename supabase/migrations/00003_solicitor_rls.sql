@@ -3,6 +3,14 @@
 -- Description: Add solicitor-specific RLS policies for donors, moves, and
 --              move_ideas tables. Solicitors can only see their assigned
 --              donors and their own moves.
+--
+-- NOTE: The existing policies in 00001/00002 grant broad org-member SELECT
+-- access. PostgreSQL OR's all permissive policies together, so these
+-- solicitor-specific policies provide *additional* explicit grants.
+-- To truly restrict solicitors to only their assigned donors, the broad
+-- org-member policies would need to be narrowed (out of scope for this
+-- migration). These policies ensure correct access if the broad policies
+-- are later tightened to exclude solicitors.
 -- ============================================================================
 
 -- ============================================================================
@@ -17,11 +25,11 @@ CREATE POLICY "solicitors_select_assigned_donors"
   USING (
     assigned_solicitor_id = auth.uid()
     AND organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   );
 
@@ -33,21 +41,21 @@ CREATE POLICY "solicitors_update_assigned_donors"
   USING (
     assigned_solicitor_id = auth.uid()
     AND organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   )
   WITH CHECK (
     assigned_solicitor_id = auth.uid()
     AND organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   );
 
@@ -63,11 +71,11 @@ CREATE POLICY "solicitors_select_own_moves"
   USING (
     solicitor_id = auth.uid()
     AND organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   );
 
@@ -79,11 +87,11 @@ CREATE POLICY "solicitors_insert_own_moves"
   WITH CHECK (
     solicitor_id = auth.uid()
     AND organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   );
 
@@ -95,21 +103,21 @@ CREATE POLICY "solicitors_update_own_moves"
   USING (
     solicitor_id = auth.uid()
     AND organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   )
   WITH CHECK (
     solicitor_id = auth.uid()
     AND organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   );
 
@@ -127,10 +135,10 @@ CREATE POLICY "solicitors_select_move_ideas"
   USING (
     organization_id IS NULL
     OR organization_id IN (
-      SELECT organization_id
-      FROM organization_users
-      WHERE user_id = auth.uid()
-        AND status = 'active'
-        AND role = 'solicitor'
+      SELECT ou.organization_id
+      FROM organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+        AND ou.role = 'solicitor'
     )
   );

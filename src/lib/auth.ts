@@ -14,6 +14,7 @@ export interface CurrentUser {
     email: string | null;
     role: string;
     status: string;
+    is_super_admin?: boolean;
     created_at: string;
     updated_at: string;
   } | null;
@@ -28,6 +29,20 @@ export interface CurrentUser {
     invitation_expires_at: string | null;
     created_at: string;
   } | null;
+}
+
+/**
+ * Checks whether the given profile represents a super admin.
+ * Supports both the `role` enum field (from 00001 schema: role = 'super_admin')
+ * and the `is_super_admin` boolean field (from types.ts / 00002 schema).
+ */
+function isSuperAdmin(
+  profile: CurrentUser["profile"]
+): boolean {
+  if (!profile) return false;
+  if (profile.role === "super_admin") return true;
+  if (profile.is_super_admin === true) return true;
+  return false;
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
@@ -67,7 +82,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 
 export function getUserRole(currentUser: CurrentUser): string {
   // Check profile-level role for super_admin
-  if (currentUser.profile?.role === "super_admin") {
+  if (isSuperAdmin(currentUser.profile)) {
     return "super_admin";
   }
   // Check organization-level role
@@ -109,7 +124,7 @@ export async function requireOrganizationAccess(
   }
 
   // Super Admins bypass organization access checks
-  if (currentUser.profile?.role === "super_admin") {
+  if (isSuperAdmin(currentUser.profile)) {
     return currentUser;
   }
 
@@ -141,7 +156,7 @@ export async function getUserOrganizationId(): Promise<string | null> {
   }
 
   // Super Admins may impersonate an organization via cookie
-  if (currentUser.profile?.role === "super_admin") {
+  if (isSuperAdmin(currentUser.profile)) {
     const cookieStore = await cookies();
     const impersonatedOrgId = cookieStore.get("x-org-id")?.value;
     if (impersonatedOrgId) {
@@ -172,7 +187,7 @@ export async function requireSolicitorDonorAccess(
   }
 
   // Super Admins bypass donor access checks
-  if (currentUser.profile?.role === "super_admin") {
+  if (isSuperAdmin(currentUser.profile)) {
     return currentUser;
   }
 
