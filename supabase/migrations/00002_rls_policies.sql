@@ -3,6 +3,8 @@
 -- ============================================================
 
 -- Helper function: check if the current auth user is a super_admin
+-- NOTE: This function queries profiles. Do NOT use it in RLS policies
+-- on the profiles table itself to avoid infinite recursion.
 CREATE OR REPLACE FUNCTION public.is_super_admin()
 RETURNS boolean
 LANGUAGE sql
@@ -10,15 +12,17 @@ STABLE
 SECURITY DEFINER
 SET search_path = public, auth
 AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.profiles
-    WHERE id = auth.uid()
-      AND is_super_admin = true
+  SELECT COALESCE(
+    (SELECT is_super_admin
+     FROM public.profiles
+     WHERE id = auth.uid()),
+    false
   );
 $$;
 
 -- Helper function: get the organization_id(s) for the current auth user
+-- NOTE: This function queries organization_users. Do NOT use it in RLS
+-- policies on the organization_users table itself to avoid infinite recursion.
 CREATE OR REPLACE FUNCTION public.user_organization_ids()
 RETURNS SETOF uuid
 LANGUAGE sql
@@ -31,6 +35,95 @@ AS $$
   WHERE user_id = auth.uid()
     AND status = 'active';
 $$;
+
+-- ============================================================
+-- PROFILES (users can read/update their own profile)
+-- Must come first: is_super_admin() depends on reading profiles,
+-- so we inline the super-admin check here to avoid recursion.
+-- ============================================================
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- Super Admin: full access to all profiles (inlined check to avoid recursion)
+CREATE POLICY "super_admin_all_profiles"
+  ON public.profiles
+  FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_super_admin = true
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.is_super_admin = true
+    )
+  );
+
+-- Users can read their own profile
+CREATE POLICY "users_select_own_profile"
+  ON public.profiles
+  FOR SELECT
+  USING (id = auth.uid());
+
+-- Users can update their own profile
+CREATE POLICY "users_update_own_profile"
+  ON public.profiles
+  FOR UPDATE
+  USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
+
+-- ============================================================
+-- ORGANIZATION_USERS
+-- Must come before tables that use user_organization_ids().
+-- Inline checks here to avoid recursion since the helper queries
+-- this table.
+-- ============================================================
+ALTER TABLE public.organization_users ENABLE ROW LEVEL SECURITY;
+
+-- Super Admin: full access (uses is_super_admin which reads profiles, not this table)
+CREATE POLICY "super_admin_all_organization_users"
+  ON public.organization_users
+  FOR ALL
+  USING (public.is_super_admin())
+  WITH CHECK (public.is_super_admin());
+
+-- Org members can see other members in their organization (inlined to avoid recursion)
+CREATE POLICY "org_members_select_organization_users"
+  ON public.organization_users
+  FOR SELECT
+  USING (
+    organization_id IN (
+      SELECT ou.organization_id
+      FROM public.organization_users ou
+      WHERE ou.user_id = auth.uid()
+        AND ou.status = 'active'
+    )
+  );
+
+-- Users can always read their own membership record
+CREATE POLICY "users_select_own_org_membership"
+  ON public.organization_users
+  FOR SELECT
+  USING (user_id = auth.uid());
+
+-- ============================================================
+-- ORGANIZATIONS
+-- ============================================================
+ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
+
+-- Super Admin: full access to all organizations
+CREATE POLICY "super_admin_all_organizations"
+  ON public.organizations
+  FOR ALL
+  USING (public.is_super_admin())
+  WITH CHECK (public.is_super_admin());
+
+-- Org members can read their own organization
+CREATE POLICY "org_members_select_organization"
+  ON public.organizations
+  FOR SELECT
+  USING (id IN (SELECT public.user_organization_ids()));
 
 -- ============================================================
 -- DONORS
@@ -337,70 +430,3 @@ CREATE POLICY "org_members_delete_import_logs"
   ON public.import_logs
   FOR DELETE
   USING (organization_id IN (SELECT public.user_organization_ids()));
-
--- ============================================================
--- PROFILES (users can read/update their own profile)
--- ============================================================
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
--- Super Admin: full access to all profiles
-CREATE POLICY "super_admin_all_profiles"
-  ON public.profiles
-  FOR ALL
-  USING (public.is_super_admin())
-  WITH CHECK (public.is_super_admin());
-
--- Users can read their own profile
-CREATE POLICY "users_select_own_profile"
-  ON public.profiles
-  FOR SELECT
-  USING (id = auth.uid());
-
--- Users can update their own profile
-CREATE POLICY "users_update_own_profile"
-  ON public.profiles
-  FOR UPDATE
-  USING (id = auth.uid())
-  WITH CHECK (id = auth.uid());
-
--- ============================================================
--- ORGANIZATIONS
--- ============================================================
-ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
-
--- Super Admin: full access to all organizations
-CREATE POLICY "super_admin_all_organizations"
-  ON public.organizations
-  FOR ALL
-  USING (public.is_super_admin())
-  WITH CHECK (public.is_super_admin());
-
--- Org members can read their own organization
-CREATE POLICY "org_members_select_organization"
-  ON public.organizations
-  FOR SELECT
-  USING (id IN (SELECT public.user_organization_ids()));
-
--- ============================================================
--- ORGANIZATION_USERS
--- ============================================================
-ALTER TABLE public.organization_users ENABLE ROW LEVEL SECURITY;
-
--- Super Admin: full access
-CREATE POLICY "super_admin_all_organization_users"
-  ON public.organization_users
-  FOR ALL
-  USING (public.is_super_admin())
-  WITH CHECK (public.is_super_admin());
-
--- Org members can see other members in their organization
-CREATE POLICY "org_members_select_organization_users"
-  ON public.organization_users
-  FOR SELECT
-  USING (organization_id IN (SELECT public.user_organization_ids()));
-
--- Users can always read their own membership record
-CREATE POLICY "users_select_own_org_membership"
-  ON public.organization_users
-  FOR SELECT
-  USING (user_id = auth.uid());
