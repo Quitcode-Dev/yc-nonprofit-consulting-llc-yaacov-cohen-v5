@@ -4,12 +4,6 @@
 
 Create a `.env.local` file in the project root with the following variables:
 
-# Project Setup Guide
-
-## Environment Variables
-
-Create a `.env.local` file in the project root with the following variables:
-
 ```env
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
