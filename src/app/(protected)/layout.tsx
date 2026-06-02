@@ -18,7 +18,9 @@ export default async function ProtectedLayout({
   const sidebarUser = {
     id: currentUser.user.id,
     email: currentUser.user.email,
-    fullName: currentUser.profile?.full_name ?? null,
+    fullName: [currentUser.profile?.first_name, currentUser.profile?.last_name]
+      .filter(Boolean)
+      .join(" ") || null,
   };
 
   return (
