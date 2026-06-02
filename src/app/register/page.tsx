@@ -152,15 +152,30 @@ export default function RegisterPage() {
 
         // Sign in the user on the client side
         const supabase = createBrowserClient();
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: data.email || email,
-          password,
-        });
+        let signedIn = false;
 
-        if (signInError) {
-          // Account was created but sign-in failed; redirect to login
-          router.push("/login");
-          return;
+        // Prefer the server-generated magic link token for reliable sign-in
+        if (data.hashedToken) {
+          const { error: otpError } = await supabase.auth.verifyOtp({
+            token_hash: data.hashedToken,
+            type: "magiclink",
+          });
+          if (!otpError) {
+            signedIn = true;
+          }
+        }
+
+        // Fall back to password sign-in if magic link wasn't available or failed
+        if (!signedIn) {
+          const { error: signInError } = await supabase.auth.signInWithPassword({
+            email: data.email || email,
+            password,
+          });
+          if (signInError) {
+            // Account was created but sign-in failed; redirect to login
+            router.push("/login");
+            return;
+          }
         }
 
         router.push("/dashboard");

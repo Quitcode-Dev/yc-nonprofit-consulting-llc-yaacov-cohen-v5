@@ -159,12 +159,28 @@ export async function POST(request: NextRequest) {
       console.error("Failed to update organization_users:", updateError);
     }
 
-    // 5. Generate a session for the new user so they are logged in
-    //    We use the admin API to generate a magic link or sign in on their behalf.
-    //    Since we're server-side, we return success and let the client sign in.
+    // 5. Generate a magic link so the client can establish a session reliably
+    const { data: linkData, error: linkError } =
+      await supabase.auth.admin.generateLink({
+        type: "magiclink",
+        email,
+      });
+
+    if (linkError || !linkData?.properties?.hashed_token) {
+      // User was created but we couldn't generate a sign-in link;
+      // fall back to letting the client sign in with password.
+      return NextResponse.json({
+        success: true,
+        email,
+        hashedToken: null,
+        error: null,
+      });
+    }
+
     return NextResponse.json({
       success: true,
       email,
+      hashedToken: linkData.properties.hashed_token,
       error: null,
     });
   } catch (err) {
