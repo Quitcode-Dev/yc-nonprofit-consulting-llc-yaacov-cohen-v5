@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { getUserRole } from "./actions";
@@ -12,7 +12,25 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
-export default function LoginPage() {
+/** Reads the `expired` search param and renders an alert when present.
+ *  Isolated into its own component so it can be wrapped in <Suspense>,
+ *  which is required by Next.js when using useSearchParams in a page. */
+function ExpiredSessionAlert() {
+  const searchParams = useSearchParams();
+  const isExpired = searchParams.get("expired") === "true";
+
+  if (!isExpired) return null;
+
+  return (
+    <Alert variant="destructive" className="mb-4">
+      <AlertDescription>
+        Your session has expired. Please log in again.
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -55,6 +73,45 @@ export default function LoginPage() {
   }
 
   return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="email">Email</Label>
+        <Input
+          id="email"
+          name="email"
+          type="email"
+          placeholder="you@example.com"
+          required
+          autoComplete="email"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="password">Password</Label>
+        <Input
+          id="password"
+          name="password"
+          type="password"
+          placeholder="••••••••"
+          required
+          autoComplete="current-password"
+        />
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <Button type="submit" className="w-full" disabled={isPending}>
+        {isPending ? "Signing in…" : "Sign In"}
+      </Button>
+    </form>
+  );
+}
+
+export default function LoginPage() {
+  return (
     <Card className="w-full max-w-md p-6">
       <CardHeader className="space-y-1 px-0 pt-0">
         <CardTitle className="text-2xl font-bold text-center">
@@ -62,40 +119,11 @@ export default function LoginPage() {
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              placeholder="you@example.com"
-              required
-              autoComplete="email"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              placeholder="••••••••"
-              required
-              autoComplete="current-password"
-            />
-          </div>
+        <Suspense fallback={null}>
+          <ExpiredSessionAlert />
+        </Suspense>
 
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          <Button type="submit" className="w-full" disabled={isPending}>
-            {isPending ? "Signing in…" : "Sign In"}
-          </Button>
-        </form>
+        <LoginForm />
 
         <div className="mt-4 text-center text-sm">
           <Link

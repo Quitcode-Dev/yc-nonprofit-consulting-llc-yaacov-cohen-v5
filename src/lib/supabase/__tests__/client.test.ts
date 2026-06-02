@@ -32,7 +32,13 @@ describe("createBrowserClient", () => {
     createBrowserClient();
     expect(mockCreate).toHaveBeenCalledWith(
       "https://test.supabase.co",
-      "test-anon-key"
+      "test-anon-key",
+      {
+        auth: {
+          autoRefreshToken: true,
+          persistSession: true,
+        },
+      }
     );
   });
 });
