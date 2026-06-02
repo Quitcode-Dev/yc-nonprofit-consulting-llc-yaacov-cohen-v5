@@ -4,3 +4,91 @@
 
 Create a `.env.local` file in the project root with the following variables:
 
+# Project Setup Guide
+
+## Environment Variables
+
+Create a `.env.local` file in the project root with the following variables:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+### Required Variables
+
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous/public API key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-side only, never expose to client) |
+
+## Supabase JWT Expiry Configuration
+
+To enforce a 30-minute session timeout for inactive users:
+
+1. Go to the [Supabase Dashboard](https://supabase.com/dashboard)
+2. Select your project
+3. Navigate to **Authentication** → **Settings** → **Auth Settings**
+4. Under **JWT Expiry**, set the value to **1800** (seconds = 30 minutes)
+5. Click **Save**
+
+This means that access tokens will expire after 30 minutes. The client-side Supabase library is configured with `autoRefreshToken: true`, so active users will have their tokens refreshed automatically before expiry. Inactive users whose tokens expire will be redirected to `/login?expired=true` by the middleware, where they will see a "Your session has expired" message.
+
+### How It Works
+
+- **Active users:** The Supabase browser client (`src/lib/supabase/client.ts`) is configured with `autoRefreshToken: true` and `persistSession: true`. This means the client will automatically refresh the JWT before it expires as long as the user is actively using the application.
+- **Inactive users:** If a user is inactive for longer than the JWT expiry period (30 minutes), their token will expire. The Next.js middleware (`src/middleware.ts`) checks for a valid user session on every protected route request. If no valid session is found, the user is redirected to `/login?expired=true`.
+- **Session refresh on navigation:** The middleware also calls `updateSession()` on every request, which refreshes the Supabase auth cookies if the session is still valid.
+
+## Initial Super Admin Creation
+
+To create the first Super Admin user:
+
+1. **Create a user in Supabase Auth:**
+   - Go to the [Supabase Dashboard](https://supabase.com/dashboard)
+   - Navigate to **Authentication** → **Users**
+   - Click **Add User** → **Create New User**
+   - Enter the email and password for the Super Admin
+   - Click **Create User**
+
+2. **Create the profile record:**
+   - Go to **Table Editor** → **profiles**
+   - Insert a new row:
+     - `id`: The UUID of the user you just created (copy from the Auth → Users table)
+     - `email`: The same email address
+     - `first_name`: Admin's first name
+     - `last_name`: Admin's last name
+     - `is_super_admin`: `true`
+
+3. **Verify access:**
+   - Navigate to the application login page
+   - Sign in with the Super Admin credentials
+   - You should be redirected to the `/admin` dashboard
+
+## Development
+
+### Install dependencies
+
+```bash
+npm install
+```
+
+### Run the development server
+
+```bash
+npm run dev
+```
+
+### Run tests
+
+```bash
+npm test
+```
+
+### Build for production
+
+```bash
+npm run build
+```
