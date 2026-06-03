@@ -68,9 +68,10 @@ export interface Profile {
 export interface Organization {
   id: string;
   name: string;
-  slug: string;
+  slug: string | null;
   logo_url: string | null;
-  settings: Record<string, unknown>;
+  status: "active" | "inactive";
+  settings: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
