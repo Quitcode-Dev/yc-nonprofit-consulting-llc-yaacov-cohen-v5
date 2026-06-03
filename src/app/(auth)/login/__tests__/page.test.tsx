@@ -3,9 +3,13 @@ import { render, screen } from "@testing-library/react";
 import LoginPage from "../page";
 
 // Mock next/navigation
+const mockGet = jest.fn(() => null);
 jest.mock("next/navigation", () => ({
   useRouter: () => ({
     push: jest.fn(),
+  }),
+  useSearchParams: () => ({
+    get: mockGet,
   }),
 }));
 
@@ -24,6 +28,14 @@ jest.mock("../actions", () => ({
 }));
 
 describe("LoginPage", () => {
+  beforeEach(() => {
+    mockGet.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
   it("renders email and password fields", () => {
     render(<LoginPage />);
 
@@ -49,5 +61,22 @@ describe("LoginPage", () => {
     render(<LoginPage />);
 
     expect(screen.getByText("Sign In")).toBeInTheDocument();
+  });
+
+  it("shows session expired alert when expired=true query param is present", () => {
+    mockGet.mockImplementation((key: string) => (key === "expired" ? "true" : null));
+    render(<LoginPage />);
+
+    expect(
+      screen.getByText("Your session has expired. Please log in again.")
+    ).toBeInTheDocument();
+  });
+
+  it("does not show session expired alert when expired param is absent", () => {
+    render(<LoginPage />);
+
+    expect(
+      screen.queryByText("Your session has expired. Please log in again.")
+    ).not.toBeInTheDocument();
   });
 });

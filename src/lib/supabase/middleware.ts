@@ -47,7 +47,7 @@ export async function updateSession(request: NextRequest) {
   if (!user && !isPublicPath) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("redirectTo", pathname);
+    url.searchParams.set("expired", "true");
     return NextResponse.redirect(url);
   }
 
