@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import AccessAsAdminButton from "./access-as-admin-button";
+import { OrgDeactivation } from "./org-deactivation";
 
 interface OrganizationRow {
   id: string;
@@ -151,6 +152,10 @@ export default async function OrganizationDetailPage({
       {/* Actions */}
       <div className="flex items-center gap-3">
         <AccessAsAdminButton organizationId={organization.id} />
+        <OrgDeactivation
+          organizationId={organization.id}
+          status={organization.status}
+        />
       </div>
     </div>
   );

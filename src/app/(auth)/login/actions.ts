@@ -36,13 +36,28 @@ export async function getUserRole(): Promise<{
   }
 
   // Check organization_users for org-level role (org_admin, fundraiser/solicitor)
+  // Also join organizations to verify the org is active
   const { data: orgUser } = await supabase
     .from("organization_users")
-    .select("role")
+    .select("role, organizations(status)")
     .eq("user_id", userId)
     .eq("status", "active")
     .limit(1)
     .single();
+
+  if (orgUser) {
+    // Type-safe access: Supabase infers the FK join type as array; cast via unknown
+    const orgRecord = (orgUser.organizations as unknown) as { status: string } | null;
+    const orgStatus = orgRecord?.status;
+    if (orgStatus === "inactive") {
+      return {
+        success: false,
+        role: null,
+        error:
+          "Your organization's account has been deactivated. Contact your administrator.",
+      };
+    }
+  }
 
   const role = orgUser?.role ?? "solicitor";
 
