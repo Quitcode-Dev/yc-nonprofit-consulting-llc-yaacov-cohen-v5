@@ -145,8 +145,9 @@ export async function requireOrganizationAccess(
 
 /**
  * Returns the organization_id for the current user.
- * For Super Admins, checks for an impersonated org ID from a cookie
- * named "x-org-id". Falls back to the user's own organization_users record.
+ * For Super Admins, checks for an impersonated org ID from the cookie
+ * named "impersonated_org_id" (also supports legacy "x-org-id").
+ * Falls back to the user's own organization_users record.
  * Returns null if no organization is associated.
  */
 export async function getUserOrganizationId(): Promise<string | null> {
@@ -159,7 +160,9 @@ export async function getUserOrganizationId(): Promise<string | null> {
   // Super Admins may impersonate an organization via cookie
   if (isSuperAdmin(currentUser.profile)) {
     const cookieStore = await cookies();
-    const impersonatedOrgId = cookieStore.get("x-org-id")?.value;
+    const impersonatedOrgId =
+      cookieStore.get("impersonated_org_id")?.value ??
+      cookieStore.get("x-org-id")?.value;
     if (impersonatedOrgId) {
       return impersonatedOrgId;
     }
