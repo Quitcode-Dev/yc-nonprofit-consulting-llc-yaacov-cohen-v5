@@ -30,7 +30,11 @@ interface UsersTableProps {
 function StatusBadge({ status }: { status: string }) {
   switch (status) {
     case "active":
-      return <Badge variant="success">Active</Badge>;
+      return (
+        <Badge className="border-transparent bg-green-100 text-green-800 hover:bg-green-100/80">
+          Active
+        </Badge>
+      );
     case "pending":
       return (
         <Badge className="border-transparent bg-yellow-100 text-yellow-800 hover:bg-yellow-100/80">
@@ -38,7 +42,11 @@ function StatusBadge({ status }: { status: string }) {
         </Badge>
       );
     case "inactive":
-      return <Badge variant="muted">Inactive</Badge>;
+      return (
+        <Badge className="border-transparent bg-gray-100 text-gray-600 hover:bg-gray-100/80">
+          Inactive
+        </Badge>
+      );
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
