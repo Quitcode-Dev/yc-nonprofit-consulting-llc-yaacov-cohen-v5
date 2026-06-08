@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { requireRole, getUserOrganizationId } from "@/lib/auth";
+import { requireRole, getUserOrganizationId, getCurrentUser, getUserRole } from "@/lib/auth";
 import { createServerClient } from "@/lib/supabase/server";
 import { calculateDonorScore } from "@/lib/scoring";
 
@@ -127,4 +127,77 @@ export async function createDonor(
   await calculateDonorScore(newDonor.id, organizationId);
 
   redirect(`/donors/${newDonor.id}`);
+}
+
+// ─── Donor Characteristics ────────────────────────────────────────────────────
+
+export type DonorCharacteristics = {
+  is_parent: boolean;
+  is_grandparent: boolean;
+  is_alumni: boolean;
+  is_board_member: boolean;
+  is_community_builder: boolean;
+  is_program_attendee: boolean;
+  is_volunteer: boolean;
+  is_donor_advised_fund: boolean;
+  is_foundation_trustee: boolean;
+};
+
+export type UpdateCharacteristicsState = {
+  error?: string;
+  success?: boolean;
+};
+
+export async function updateDonorCharacteristics(
+  donorId: string,
+  characteristics: DonorCharacteristics
+): Promise<UpdateCharacteristicsState> {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  const organizationId = await getUserOrganizationId();
+  if (!organizationId) {
+    return { error: "No organization found for your account." };
+  }
+
+  const supabase = await createServerClient();
+
+  // Fetch donor to verify ownership and org
+  const { data: donor, error: donorError } = await supabase
+    .from("donors")
+    .select("id, organization_id, assigned_solicitor_id")
+    .eq("id", donorId)
+    .eq("organization_id", organizationId)
+    .single();
+
+  if (donorError || !donor) {
+    return { error: "Donor not found." };
+  }
+
+  // Check authorization: admin can edit any donor; solicitor can only edit assigned donors
+  const role = getUserRole(currentUser);
+  const isAdmin = role === "org_admin" || role === "super_admin";
+  const isSolicitorAssigned =
+    role === "solicitor" &&
+    donor.assigned_solicitor_id === currentUser.user.id;
+
+  if (!isAdmin && !isSolicitorAssigned) {
+    return { error: "You are not authorized to edit this donor." };
+  }
+
+  const { error: updateError } = await supabase
+    .from("donors")
+    .update(characteristics)
+    .eq("id", donorId);
+
+  if (updateError) {
+    return { error: "Failed to update characteristics. Please try again." };
+  }
+
+  // Recalculate score
+  await calculateDonorScore(donorId, organizationId);
+
+  return { success: true };
 }
