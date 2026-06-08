@@ -2,6 +2,7 @@ import { requireRole, getUserOrganizationId } from "@/lib/auth";
 import { createServerClient } from "@/lib/supabase/server";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import OrgProfileForm from "./org-profile-form";
+import ScoringConfigPage from "./scoring/page";
 
 interface OrganizationRow {
   id: string;
@@ -56,8 +57,8 @@ export default async function OrgSettingsPage() {
         </TabsContent>
 
         <TabsContent value="scoring">
-          <div className="mt-4 text-sm text-muted-foreground">
-            Scoring configuration coming soon.
+          <div className="mt-4">
+            <ScoringConfigPage />
           </div>
         </TabsContent>
 
