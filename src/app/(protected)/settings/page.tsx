@@ -4,6 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import OrgProfileForm from "./org-profile-form";
 import ScoringConfigPage from "./scoring/page";
 import TierConfigPage from "./tiers/page";
+import ScoreBandConfigPage from "./score-bands/page";
 
 interface OrganizationRow {
   id: string;
@@ -44,6 +45,7 @@ export default async function OrgSettingsPage() {
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="scoring">Scoring</TabsTrigger>
           <TabsTrigger value="tiers">Tiers</TabsTrigger>
+          <TabsTrigger value="score-bands">Score Bands</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
         </TabsList>
 
@@ -66,6 +68,12 @@ export default async function OrgSettingsPage() {
         <TabsContent value="tiers">
           <div className="mt-4">
             <TierConfigPage />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="score-bands">
+          <div className="mt-4">
+            <ScoreBandConfigPage />
           </div>
         </TabsContent>
 
