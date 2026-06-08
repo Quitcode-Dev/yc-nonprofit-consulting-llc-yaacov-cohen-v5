@@ -5,6 +5,7 @@ import OrgProfileForm from "./org-profile-form";
 import ScoringConfigPage from "./scoring/page";
 import TierConfigPage from "./tiers/page";
 import ScoreBandConfigPage from "./score-bands/page";
+import IntegrationsPage from "./integrations/page";
 
 interface OrganizationRow {
   id: string;
@@ -78,8 +79,8 @@ export default async function OrgSettingsPage() {
         </TabsContent>
 
         <TabsContent value="integrations">
-          <div className="mt-4 text-sm text-muted-foreground">
-            Integrations configuration coming soon.
+          <div className="mt-4">
+            <IntegrationsPage />
           </div>
         </TabsContent>
       </Tabs>
