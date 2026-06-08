@@ -3,6 +3,7 @@ import { createServerClient } from "@/lib/supabase/server";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import OrgProfileForm from "./org-profile-form";
 import ScoringConfigPage from "./scoring/page";
+import TierConfigPage from "./tiers/page";
 
 interface OrganizationRow {
   id: string;
@@ -63,8 +64,8 @@ export default async function OrgSettingsPage() {
         </TabsContent>
 
         <TabsContent value="tiers">
-          <div className="mt-4 text-sm text-muted-foreground">
-            Tier configuration coming soon.
+          <div className="mt-4">
+            <TierConfigPage />
           </div>
         </TabsContent>
 
