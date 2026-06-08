@@ -153,7 +153,7 @@ export default function ScoringForm({ initialFields }: ScoringFormProps) {
                       <Input
                         type="number"
                         name={`${field.key}_points`}
-                        value={fields.find((f) => f.key === field.key)?.points ?? 0}
+                        value={field.points}
                         min={0}
                         step={1}
                         disabled={!field.enabled}

@@ -1,4 +1,4 @@
-import { requireRole, getUserOrganizationId } from "@/lib/auth";
+import { getUserOrganizationId } from "@/lib/auth";
 import { createServerClient } from "@/lib/supabase/server";
 import ScoringForm from "./scoring-form";
 
@@ -15,7 +15,6 @@ const FIELD_DEFINITIONS = [
 ] as const;
 
 export default async function ScoringConfigPage() {
-  await requireRole(["org_admin", "super_admin"]);
 
   const organizationId = await getUserOrganizationId();
 

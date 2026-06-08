@@ -146,7 +146,7 @@ export async function recalculateAllDonorScores(orgId: string): Promise<void> {
     .eq("organization_id", orgId)
     .order("min_score", { ascending: true });
 
-  const fields: Array<{
+  const scoringFields: Array<{
     donorField: string;
     enabledKey: string;
     pointsKey: string;
@@ -162,11 +162,14 @@ export async function recalculateAllDonorScores(orgId: string): Promise<void> {
     { donorField: "is_foundation_trustee", enabledKey: "foundation_trustee_enabled", pointsKey: "foundation_trustee_points" },
   ];
 
+  // Compute score and tier for every donor in memory, then batch-upsert
+  const updates: Array<{ id: string; score: number; tier?: string }> = [];
+
   for (const donor of donors) {
     const donorRecord = donor as Record<string, unknown>;
     let score = 0;
 
-    for (const { donorField, enabledKey, pointsKey } of fields) {
+    for (const { donorField, enabledKey, pointsKey } of scoringFields) {
       const isChecked = donorRecord[donorField] as boolean;
       const isEnabled = (config as Record<string, unknown>)[enabledKey] as boolean;
       const points = (config as Record<string, unknown>)[pointsKey] as number;
@@ -177,25 +180,32 @@ export async function recalculateAllDonorScores(orgId: string): Promise<void> {
     }
 
     // Determine tier
-    let tier: string | null = null;
+    let tier: string | undefined;
     if (tiers && tiers.length > 0) {
       const matchedTier = tiers.find(
         (t: { min_score: number; max_score: number; name: string }) =>
           score >= t.min_score && score <= t.max_score
       );
-      tier = matchedTier?.name ?? null;
+      if (matchedTier) {
+        tier = matchedTier.name;
+      }
     }
 
-    // Update donor score and tier
-    const updatePayload: Record<string, unknown> = { score };
-    if (tier !== null) {
-      updatePayload.tier = tier;
+    const update: { id: string; score: number; tier?: string } = {
+      id: donor.id as string,
+      score,
+    };
+    if (tier !== undefined) {
+      update.tier = tier;
     }
+    updates.push(update);
+  }
 
+  // Batch-update all donors in a single upsert call
+  if (updates.length > 0) {
     await supabase
       .from("donors")
-      .update(updatePayload)
-      .eq("id", donor.id as string);
+      .upsert(updates, { onConflict: "id" });
   }
 }
 
