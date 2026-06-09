@@ -42,6 +42,14 @@ interface SolicitorOption {
   name: string;
 }
 
+interface SearchParams {
+  status?: string;
+  solicitor?: string;
+  dateRange?: string;
+  dir?: string;
+  page?: string;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseSortDir(raw: string | undefined): SortDir {
@@ -59,7 +67,7 @@ function parsePage(raw: string | undefined): number {
 }
 
 function formatDate(dateStr: string): string {
-  // Parse as local date to avoid off-by-one from UTC conversion
+  // Parse as local date to avoid UTC off-by-one
   const [year, month, day] = dateStr.split("-").map(Number);
   return new Date(year, month - 1, day).toLocaleDateString("en-US", {
     year: "numeric",
@@ -75,7 +83,7 @@ function buildUrl(
   const params = new URLSearchParams();
   const merged = { ...current, ...overrides };
   for (const [key, value] of Object.entries(merged)) {
-    if (value !== undefined && value !== "" && String(value) !== "") {
+    if (value !== undefined && String(value) !== "") {
       params.set(key, String(value));
     }
   }
@@ -85,22 +93,15 @@ function buildUrl(
 
 // ─── Sort Indicator ───────────────────────────────────────────────────────────
 
-function SortIndicator({ currentDir }: { currentDir: SortDir }) {
-  return currentDir === "asc" ? (
-    <ChevronUp className="h-3.5 w-3.5 ml-1" />
+function SortIndicator({ dir }: { dir: SortDir }) {
+  return dir === "asc" ? (
+    <ChevronUp className="h-3.5 w-3.5 ml-1 inline-block" />
   ) : (
-    <ChevronDown className="h-3.5 w-3.5 ml-1" />
+    <ChevronDown className="h-3.5 w-3.5 ml-1 inline-block" />
   );
 }
 
 // ─── Page Component ───────────────────────────────────────────────────────────
-
-interface SearchParams {
-  status?: string;
-  solicitor?: string;
-  dir?: string;
-  page?: string;
-}
 
 export default async function MovesListPage({
   searchParams,
@@ -129,12 +130,15 @@ export default async function MovesListPage({
   const solicitorFilter = isAdmin
     ? (resolvedParams.solicitor?.trim() ?? "")
     : "";
+  const dateRange = resolvedParams.dateRange?.trim() ?? "";
   const page = parsePage(resolvedParams.page);
 
+  // Current params used for building URLs (preserves active filters)
   const currentParams: Record<string, string | undefined> = {
     dir: sortDir,
     status: statusFilter !== "all" ? statusFilter : undefined,
     solicitor: solicitorFilter || undefined,
+    dateRange: dateRange || undefined,
   };
 
   // ── Supabase client ─────────────────────────────────────────────────────────
@@ -179,14 +183,13 @@ export default async function MovesListPage({
     }
   }
 
-  // ── Build count query ───────────────────────────────────────────────────────
+  // ── Count query ─────────────────────────────────────────────────────────────
   let countQuery = supabase
     .from("moves")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId);
 
   if (!isAdmin) {
-    // Solicitors: RLS handles this, but explicitly filter for safety
     countQuery = countQuery.eq("solicitor_id", currentUser.user.id);
   } else if (solicitorFilter) {
     countQuery = countQuery.eq("solicitor_id", solicitorFilter);
@@ -196,14 +199,25 @@ export default async function MovesListPage({
     countQuery = countQuery.eq("status", statusFilter);
   }
 
+  // dateRange filter: expects "YYYY-MM-DD,YYYY-MM-DD"
+  if (dateRange) {
+    const parts = dateRange.split(",");
+    if (parts.length === 2) {
+      const [fromDate, toDate] = parts;
+      if (fromDate?.trim()) countQuery = countQuery.gte("due_date", fromDate.trim());
+      if (toDate?.trim()) countQuery = countQuery.lte("due_date", toDate.trim());
+    }
+  }
+
   const { count: totalCount } = await countQuery;
+
   const total = totalCount ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const from = (safePage - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
 
-  // ── Build data query ────────────────────────────────────────────────────────
+  // ── Data query ──────────────────────────────────────────────────────────────
   let dataQuery = supabase
     .from("moves")
     .select("id, title, due_date, status, donor_id, solicitor_id")
@@ -219,11 +233,18 @@ export default async function MovesListPage({
     dataQuery = dataQuery.eq("status", statusFilter);
   }
 
-  dataQuery = dataQuery
+  if (dateRange) {
+    const parts = dateRange.split(",");
+    if (parts.length === 2) {
+      const [fromDate, toDate] = parts;
+      if (fromDate?.trim()) dataQuery = dataQuery.gte("due_date", fromDate.trim());
+      if (toDate?.trim()) dataQuery = dataQuery.lte("due_date", toDate.trim());
+    }
+  }
+
+  const { data: movesRaw } = await dataQuery
     .order("due_date", { ascending: sortDir === "asc" })
     .range(from, to);
-
-  const { data: movesRaw } = await dataQuery;
 
   const rawMoves = (movesRaw ?? []) as Array<{
     id: string;
@@ -250,18 +271,15 @@ export default async function MovesListPage({
         first_name: string;
         last_name: string;
       }>) {
-        donorMap.set(
-          d.id,
-          [d.first_name, d.last_name].filter(Boolean).join(" ")
-        );
+        donorMap.set(d.id, [d.first_name, d.last_name].filter(Boolean).join(" "));
       }
     }
   }
 
-  // ── Fetch solicitor names (for admin view) ──────────────────────────────────
+  // ── Fetch solicitor names (admin view) ──────────────────────────────────────
   const solicitorProfileMap = new Map<string, string>();
 
-  if (isAdmin) {
+  if (isAdmin && rawMoves.length > 0) {
     const uniqueSolicitorIds = [...new Set(rawMoves.map((m) => m.solicitor_id))];
     if (uniqueSolicitorIds.length > 0) {
       const { data: profData } = await supabase
@@ -322,6 +340,7 @@ export default async function MovesListPage({
 
   const pageTitle = isAdmin ? "All Moves" : "My Moves";
   const colSpan = isAdmin ? 5 : 4;
+  const hasActiveFilters = statusFilter !== "all" || !!solicitorFilter || !!dateRange;
 
   return (
     <div className="space-y-6">
@@ -339,8 +358,12 @@ export default async function MovesListPage({
       </div>
 
       {/* ── Filters ────────────────────────────────────────────────────────── */}
-      <form method="GET" action="/moves" className="flex flex-wrap items-center gap-3">
-        {/* Preserve sort dir */}
+      <form
+        method="GET"
+        action="/moves"
+        className="flex flex-wrap items-center gap-3"
+      >
+        {/* Preserve sort direction across filter submissions */}
         <input type="hidden" name="dir" value={sortDir} />
 
         {/* Status filter */}
@@ -355,7 +378,7 @@ export default async function MovesListPage({
             id="statusFilter"
             name="status"
             defaultValue={statusFilter}
-            className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <option value="all">All</option>
             <option value="pending">Pending</option>
@@ -376,7 +399,7 @@ export default async function MovesListPage({
               id="solicitorFilter"
               name="solicitor"
               defaultValue={solicitorFilter}
-              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               <option value="">All Solicitors</option>
               {solicitorOptions.map((s) => (
@@ -388,15 +411,11 @@ export default async function MovesListPage({
           </div>
         )}
 
-        <button
-          type="submit"
-          className="h-10 px-4 rounded-md border border-input bg-background text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-        >
+        <Button type="submit" variant="outline" size="sm">
           Apply
-        </button>
+        </Button>
 
-        {/* Reset link */}
-        {(statusFilter !== "all" || solicitorFilter) && (
+        {hasActiveFilters && (
           <Link
             href="/moves"
             className="text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -413,15 +432,14 @@ export default async function MovesListPage({
             <TableRow>
               <TableHead>Move Title</TableHead>
               <TableHead>Donor Name</TableHead>
-              {isAdmin && <TableHead>Solicitor</TableHead>}
-              {/* Due Date — sortable */}
+              {isAdmin && <TableHead>Solicitor Name</TableHead>}
               <TableHead>
                 <Link
                   href={sortHref()}
-                  className="flex items-center hover:text-foreground transition-colors"
+                  className="inline-flex items-center hover:text-foreground transition-colors"
                 >
                   Due Date
-                  <SortIndicator currentDir={sortDir} />
+                  <SortIndicator dir={sortDir} />
                 </Link>
               </TableHead>
               <TableHead>Status</TableHead>
@@ -431,10 +449,7 @@ export default async function MovesListPage({
           <TableBody>
             {moves.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={colSpan}
-                  className="text-center py-16"
-                >
+                <TableCell colSpan={colSpan} className="text-center py-16">
                   <div className="flex flex-col items-center gap-4">
                     <p className="text-muted-foreground text-sm">
                       No moves found
@@ -449,7 +464,9 @@ export default async function MovesListPage({
               moves.map((move) => (
                 <TableRow
                   key={move.id}
-                  className={move.isOverdue ? "bg-red-50 hover:bg-red-100" : ""}
+                  className={
+                    move.isOverdue ? "bg-red-50 hover:bg-red-100" : undefined
+                  }
                 >
                   <TableCell className="font-medium">
                     <Link
@@ -461,23 +478,32 @@ export default async function MovesListPage({
                   </TableCell>
 
                   <TableCell>
-                    <Link href={`/moves/${move.id}`} className="block w-full">
+                    <Link
+                      href={`/moves/${move.id}`}
+                      className="block w-full hover:underline"
+                    >
                       {move.donorName}
                     </Link>
                   </TableCell>
 
                   {isAdmin && (
                     <TableCell>
-                      <Link href={`/moves/${move.id}`} className="block w-full">
+                      <Link
+                        href={`/moves/${move.id}`}
+                        className="block w-full hover:underline"
+                      >
                         {move.solicitorName ?? (
-                          <span className="text-muted-foreground text-sm">—</span>
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </Link>
                     </TableCell>
                   )}
 
                   <TableCell>
-                    <Link href={`/moves/${move.id}`} className="block w-full">
+                    <Link
+                      href={`/moves/${move.id}`}
+                      className="block w-full hover:underline"
+                    >
                       {formatDate(move.due_date)}
                     </Link>
                   </TableCell>
@@ -485,7 +511,7 @@ export default async function MovesListPage({
                   <TableCell>
                     <Link
                       href={`/moves/${move.id}`}
-                      className="flex items-center gap-2"
+                      className="inline-flex items-center gap-2"
                     >
                       {move.isOverdue ? (
                         <Badge variant="destructive">Overdue</Badge>
