@@ -45,7 +45,7 @@ interface SolicitorOption {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseSortDir(raw: string | undefined): SortDir {
-  return raw === "asc" ? "asc" : "desc";
+  return raw === "desc" ? "desc" : "asc";
 }
 
 function parseStatus(raw: string | undefined): StatusFilter {
