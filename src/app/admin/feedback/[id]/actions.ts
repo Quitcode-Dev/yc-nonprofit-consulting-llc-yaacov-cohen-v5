@@ -6,23 +6,31 @@ import { requireRole } from "@/lib/auth";
 
 export type FeedbackStatus = "new" | "reviewed" | "resolved";
 
+const VALID_STATUSES: FeedbackStatus[] = ["new", "reviewed", "resolved"];
+
 export async function updateFeedbackStatus(
   feedbackId: string,
   status: FeedbackStatus
-): Promise<void> {
+): Promise<{ success?: true; error?: string }> {
   await requireRole(["super_admin"]);
+
+  if (!VALID_STATUSES.includes(status)) {
+    return { error: `Invalid status: ${status}` };
+  }
 
   const supabase = await createServerClient();
 
   const { error } = await supabase
     .from("feedback")
-    .update({ status })
+    .update({ status, updated_at: new Date().toISOString() })
     .eq("id", feedbackId);
 
   if (error) {
-    throw new Error(`Failed to update feedback status: ${error.message}`);
+    return { error: `Failed to update feedback status: ${error.message}` };
   }
 
   revalidatePath(`/admin/feedback/${feedbackId}`);
   revalidatePath("/admin/feedback");
+
+  return { success: true };
 }

@@ -29,6 +29,7 @@ interface FeedbackDetailRaw {
   status: string;
   file_url: string | null;
   created_at: string;
+  updated_at: string | null;
   // Supabase returns joined rows as arrays when using relational selects
   profiles: ProfileRow[] | ProfileRow | null;
   organizations: OrganizationRow[] | OrganizationRow | null;
@@ -42,6 +43,7 @@ interface FeedbackDetail {
   status: FeedbackStatus;
   file_url: string | null;
   created_at: string;
+  updated_at: string | null;
   profiles: ProfileRow | null;
   organizations: OrganizationRow | null;
 }
@@ -140,6 +142,7 @@ export default async function FeedbackDetailPage({
       status,
       file_url,
       created_at,
+      updated_at,
       profiles (
         first_name,
         last_name,
@@ -167,6 +170,7 @@ export default async function FeedbackDetailPage({
     status: raw.status as FeedbackStatus,
     file_url: raw.file_url,
     created_at: raw.created_at,
+    updated_at: raw.updated_at,
     profiles: Array.isArray(raw.profiles)
       ? (raw.profiles[0] ?? null)
       : raw.profiles,
@@ -262,6 +266,16 @@ export default async function FeedbackDetailPage({
                 Submitted At
               </p>
               <p className="text-sm mt-1">{formatDate(feedback.created_at)}</p>
+            </div>
+
+            {/* Status updated */}
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">
+                Status Updated
+              </p>
+              <p className="text-sm mt-1">
+                {feedback.updated_at ? formatDate(feedback.updated_at) : "—"}
+              </p>
             </div>
 
             {/* Status */}
