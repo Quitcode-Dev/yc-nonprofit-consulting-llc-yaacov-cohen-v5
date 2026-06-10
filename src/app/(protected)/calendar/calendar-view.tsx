@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { getDisplayStatus } from "@/lib/move-utils";
 import "./calendar.css";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -43,8 +44,9 @@ interface CalendarViewProps {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getEventClassName(move: CalendarMove): string {
-  if (move.isOverdue) return "event-overdue";
-  if (move.status === "completed") return "event-completed";
+  const displayStatus = getDisplayStatus(move);
+  if (displayStatus === "overdue") return "event-overdue";
+  if (displayStatus === "completed") return "event-completed";
   return "event-pending";
 }
 

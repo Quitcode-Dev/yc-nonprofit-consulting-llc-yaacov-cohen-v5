@@ -10,6 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Link2 } from "lucide-react";
+import { getDisplayStatus, getStatusBadgeProps } from "@/lib/move-utils";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ interface MoveRow {
 interface EnrichedMove extends MoveRow {
   solicitorName: string | null;
   followUpMoveTitle: string | null;
-  isOverdue: boolean;
+  displayStatus: "pending" | "completed" | "overdue";
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -108,24 +109,15 @@ export default async function MoveHistory({ donorId }: { donorId: string }) {
     }
   }
 
-  // Compute overdue
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const moves: EnrichedMove[] = rawMoves.map((m) => {
-    const [y, mo, d] = m.due_date.split("-").map(Number);
-    const dueDate = new Date(y, mo - 1, d);
-    const isOverdue = m.status === "pending" && dueDate < today;
-
-    return {
-      ...m,
-      solicitorName: solicitorMap.get(m.solicitor_id) ?? null,
-      followUpMoveTitle: m.follow_up_move_id
-        ? (followUpTitleMap.get(m.follow_up_move_id) ?? null)
-        : null,
-      isOverdue,
-    };
-  });
+  // Compute display status (pending / completed / overdue) using shared utility
+  const moves: EnrichedMove[] = rawMoves.map((m) => ({
+    ...m,
+    solicitorName: solicitorMap.get(m.solicitor_id) ?? null,
+    followUpMoveTitle: m.follow_up_move_id
+      ? (followUpTitleMap.get(m.follow_up_move_id) ?? null)
+      : null,
+    displayStatus: getDisplayStatus(m),
+  }));
 
   return (
     <Card>
@@ -189,13 +181,23 @@ export default async function MoveHistory({ donorId }: { donorId: string }) {
                 {/* Right side */}
                 <div className="flex flex-col items-end gap-2 flex-shrink-0">
                   {/* Status badge */}
-                  {move.isOverdue ? (
-                    <Badge variant="destructive">Overdue</Badge>
-                  ) : move.status === "completed" ? (
-                    <Badge variant="success">Completed</Badge>
-                  ) : (
-                    <Badge variant="secondary">Pending</Badge>
-                  )}
+                  {(() => {
+                    const badgeProps = getStatusBadgeProps(move.displayStatus);
+                    return (
+                      <Badge
+                        variant={
+                          badgeProps.variant as
+                            | "destructive"
+                            | "secondary"
+                            | "outline"
+                            | "default"
+                        }
+                        className={badgeProps.className}
+                      >
+                        {badgeProps.label}
+                      </Badge>
+                    );
+                  })()}
 
                   {/* Completion notes (if completed) */}
                   {move.status === "completed" && move.completion_notes && (

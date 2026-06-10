@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import Pagination from "@/components/pagination";
 import { ChevronUp, ChevronDown } from "lucide-react";
+import { getDisplayStatus, getStatusBadgeProps } from "@/lib/move-utils";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ interface MoveRow {
   solicitor_id: string;
   donorName: string;
   solicitorName: string | null;
-  isOverdue: boolean;
+  displayStatus: "pending" | "completed" | "overdue";
 }
 
 interface SolicitorOption {
@@ -304,29 +305,20 @@ export default async function MovesListPage({
     }
   }
 
-  // ── Compute overdue ─────────────────────────────────────────────────────────
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const moves: MoveRow[] = rawMoves.map((m) => {
-    const [y, mo, d] = m.due_date.split("-").map(Number);
-    const dueDate = new Date(y, mo - 1, d);
-    const isOverdue = m.status === "pending" && dueDate < today;
-
-    return {
-      id: m.id,
-      title: m.title,
-      due_date: m.due_date,
-      status: m.status,
-      donor_id: m.donor_id,
-      solicitor_id: m.solicitor_id,
-      donorName: donorMap.get(m.donor_id) ?? "Unknown Donor",
-      solicitorName: isAdmin
-        ? (solicitorProfileMap.get(m.solicitor_id) ?? null)
-        : null,
-      isOverdue,
-    };
-  });
+  // ── Compute display status (pending / completed / overdue) ──────────────────
+  const moves: MoveRow[] = rawMoves.map((m) => ({
+    id: m.id,
+    title: m.title,
+    due_date: m.due_date,
+    status: m.status,
+    donor_id: m.donor_id,
+    solicitor_id: m.solicitor_id,
+    donorName: donorMap.get(m.donor_id) ?? "Unknown Donor",
+    solicitorName: isAdmin
+      ? (solicitorProfileMap.get(m.solicitor_id) ?? null)
+      : null,
+    displayStatus: getDisplayStatus(m),
+  }));
 
   // ── URL builders ────────────────────────────────────────────────────────────
   function sortHref(): string {
@@ -461,69 +453,79 @@ export default async function MovesListPage({
                 </TableCell>
               </TableRow>
             ) : (
-              moves.map((move) => (
-                <TableRow
-                  key={move.id}
-                  className={
-                    move.isOverdue ? "bg-red-50 hover:bg-red-100" : undefined
-                  }
-                >
-                  <TableCell className="font-medium">
-                    <Link
-                      href={`/moves/${move.id}`}
-                      className="hover:underline"
-                    >
-                      {move.title}
-                    </Link>
-                  </TableCell>
+              moves.map((move) => {
+                const badgeProps = getStatusBadgeProps(move.displayStatus);
+                return (
+                  <TableRow
+                    key={move.id}
+                    className={
+                      move.displayStatus === "overdue"
+                        ? "bg-red-50 hover:bg-red-100"
+                        : undefined
+                    }
+                  >
+                    <TableCell className="font-medium">
+                      <Link
+                        href={`/moves/${move.id}`}
+                        className="hover:underline"
+                      >
+                        {move.title}
+                      </Link>
+                    </TableCell>
 
-                  <TableCell>
-                    <Link
-                      href={`/moves/${move.id}`}
-                      className="block w-full hover:underline"
-                    >
-                      {move.donorName}
-                    </Link>
-                  </TableCell>
-
-                  {isAdmin && (
                     <TableCell>
                       <Link
                         href={`/moves/${move.id}`}
                         className="block w-full hover:underline"
                       >
-                        {move.solicitorName ?? (
-                          <span className="text-muted-foreground">—</span>
-                        )}
+                        {move.donorName}
                       </Link>
                     </TableCell>
-                  )}
 
-                  <TableCell>
-                    <Link
-                      href={`/moves/${move.id}`}
-                      className="block w-full hover:underline"
-                    >
-                      {formatDate(move.due_date)}
-                    </Link>
-                  </TableCell>
+                    {isAdmin && (
+                      <TableCell>
+                        <Link
+                          href={`/moves/${move.id}`}
+                          className="block w-full hover:underline"
+                        >
+                          {move.solicitorName ?? (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </Link>
+                      </TableCell>
+                    )}
 
-                  <TableCell>
-                    <Link
-                      href={`/moves/${move.id}`}
-                      className="inline-flex items-center gap-2"
-                    >
-                      {move.isOverdue ? (
-                        <Badge variant="destructive">Overdue</Badge>
-                      ) : move.status === "completed" ? (
-                        <Badge variant="success">Completed</Badge>
-                      ) : (
-                        <Badge variant="secondary">Pending</Badge>
-                      )}
-                    </Link>
-                  </TableCell>
-                </TableRow>
-              ))
+                    <TableCell>
+                      <Link
+                        href={`/moves/${move.id}`}
+                        className="block w-full hover:underline"
+                      >
+                        {formatDate(move.due_date)}
+                      </Link>
+                    </TableCell>
+
+                    <TableCell>
+                      <Link
+                        href={`/moves/${move.id}`}
+                        className="inline-flex items-center gap-2"
+                      >
+                        <Badge
+                          variant={
+                            badgeProps.variant as
+                              | "destructive"
+                              | "secondary"
+                              | "outline"
+                              | "default"
+                          }
+                          className={badgeProps.className}
+                        >
+                          {badgeProps.label}
+                        </Badge>
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
