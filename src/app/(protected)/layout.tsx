@@ -4,6 +4,7 @@ import { getCurrentUser, getUserRole } from "@/lib/auth";
 import { createServerClient } from "@/lib/supabase/server";
 import Sidebar from "@/components/sidebar";
 import ImpersonationBanner from "@/components/impersonation-banner";
+import FeedbackButton from "@/components/feedback-button";
 
 export default async function ProtectedLayout({
   children,
@@ -51,6 +52,7 @@ export default async function ProtectedLayout({
         <Sidebar role={role} user={sidebarUser} />
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
+      <FeedbackButton />
     </div>
   );
 }
