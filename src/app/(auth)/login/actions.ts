@@ -27,7 +27,21 @@ export async function getUserRole(): Promise<{
     .eq("id", userId)
     .single();
 
-  if (profileError || !profile) {
+  if (profileError) {
+    console.error("[getUserRole] Profile query failed:", {
+      message: profileError.message,
+      code: (profileError as { code?: string }).code,
+      details: (profileError as { details?: string }).details,
+      hint: (profileError as { hint?: string }).hint,
+      userId,
+    });
+    return { success: false, role: null, error: "Unable to retrieve user profile" };
+  }
+
+  if (!profile) {
+    console.error("[getUserRole] Profile not found (no error returned, possible RLS policy issue):", {
+      userId,
+    });
     return { success: false, role: null, error: "Unable to retrieve user profile" };
   }
 
@@ -36,7 +50,8 @@ export async function getUserRole(): Promise<{
   }
 
   // Check organization_users for org-level role (org_admin, fundraiser/solicitor)
-  // Also join organizations to verify the org is active
+  // Also join organizations to verify the org is active.
+  // NOTE: Supabase FK joins return arrays; we take the first element.
   const { data: orgUser } = await supabase
     .from("organization_users")
     .select("role, organizations(status)")
@@ -46,8 +61,11 @@ export async function getUserRole(): Promise<{
     .single();
 
   if (orgUser) {
-    // Type-safe access: Supabase infers the FK join type as array; cast via unknown
-    const orgRecord = (orgUser.organizations as unknown) as { status: string } | null;
+    // Supabase infers FK join results as arrays; normalise to a single record.
+    const orgRecordRaw = orgUser.organizations;
+    const orgRecord = Array.isArray(orgRecordRaw)
+      ? (orgRecordRaw[0] as { status: string } | undefined) ?? null
+      : (orgRecordRaw as { status: string } | null);
     const orgStatus = orgRecord?.status;
     if (orgStatus === "inactive") {
       return {

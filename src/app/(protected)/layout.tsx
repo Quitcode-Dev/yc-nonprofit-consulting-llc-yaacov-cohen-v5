@@ -22,9 +22,7 @@ export default async function ProtectedLayout({
   const sidebarUser = {
     id: currentUser.user.id,
     email: currentUser.user.email,
-    fullName: [currentUser.profile?.first_name, currentUser.profile?.last_name]
-      .filter(Boolean)
-      .join(" ") || null,
+    fullName: currentUser.profile?.full_name ?? null,
   };
 
   // Resolve impersonation banner data if cookie is set
