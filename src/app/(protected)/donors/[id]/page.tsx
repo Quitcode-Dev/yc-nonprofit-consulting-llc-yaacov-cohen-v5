@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import CharacteristicsForm from "./characteristics-form";
+import MoveHistory from "./move-history";
 import type { DonorCharacteristics } from "../actions";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -400,17 +401,8 @@ export default async function DonorProfilePage({
             </CardContent>
           </Card>
 
-          {/* Move History Card (placeholder) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Move History</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                No moves recorded yet.
-              </p>
-            </CardContent>
-          </Card>
+          {/* Move History */}
+          <MoveHistory donorId={donor.id} />
         </div>
 
         {/* ── Right column (col-span-1) ── */}
