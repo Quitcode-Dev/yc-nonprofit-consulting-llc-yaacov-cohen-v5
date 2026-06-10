@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser, getUserOrganizationId, getUserRole } from "@/lib/auth";
 import SolicitorDashboard from "./solicitor-dashboard";
+import AdminDashboard from "./admin-dashboard";
 
 // ─── Dashboard Page ───────────────────────────────────────────────────────────
 //
@@ -47,16 +48,25 @@ export default async function DashboardPage() {
 
   // ── Admin dashboard (org_admin / super_admin) ────────────────────────────────
   if (role === "org_admin" || role === "super_admin") {
-    const displayName = firstName ? `Welcome back, ${firstName}` : "Welcome back";
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">{displayName}</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Admin dashboard — organization overview coming soon.
-          </p>
+    if (!organizationId) {
+      const displayName = firstName ? `Welcome back, ${firstName}` : "Welcome back";
+      return (
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold">{displayName}</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              No organization associated with your account.
+            </p>
+          </div>
         </div>
-      </div>
+      );
+    }
+
+    return (
+      <AdminDashboard
+        organizationId={organizationId}
+        firstName={firstName}
+      />
     );
   }
 
