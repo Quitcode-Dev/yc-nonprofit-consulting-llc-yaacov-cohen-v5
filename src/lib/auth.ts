@@ -9,12 +9,10 @@ export interface CurrentUser {
   };
   profile: {
     id: string;
-    first_name: string | null;
-    last_name: string | null;
     email: string | null;
-    role: string;
-    status: string;
-    is_super_admin?: boolean;
+    full_name: string | null;
+    avatar_url: string | null;
+    is_super_admin: boolean;
     created_at: string;
     updated_at: string;
   } | null;
@@ -25,8 +23,9 @@ export interface CurrentUser {
     role: string;
     status: string;
     invited_email: string | null;
-    invitation_token: string | null;
-    invitation_expires_at: string | null;
+    invited_at: string | null;
+    invitation_token?: string | null;
+    invitation_expires_at?: string | null;
     joined_at: string | null;
     created_at: string;
   } | null;
@@ -34,16 +33,13 @@ export interface CurrentUser {
 
 /**
  * Checks whether the given profile represents a super admin.
- * Supports both the `role` enum field (from 00001 schema: role = 'super_admin')
- * and the `is_super_admin` boolean field (from types.ts / 00002 schema).
+ * Uses the `is_super_admin` boolean field from the profiles table.
  */
 function isSuperAdmin(
   profile: CurrentUser["profile"]
 ): boolean {
   if (!profile) return false;
-  if (profile.role === "super_admin") return true;
-  if (profile.is_super_admin === true) return true;
-  return false;
+  return profile.is_super_admin === true;
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
@@ -58,18 +54,41 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     return null;
   }
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", user.id)
     .single();
 
-  const { data: organizationUser } = await supabase
+  if (profileError) {
+    console.error("[getCurrentUser] Profile query failed:", {
+      message: profileError.message,
+      code: (profileError as { code?: string }).code,
+      details: (profileError as { details?: string }).details,
+      hint: (profileError as { hint?: string }).hint,
+      userId: user.id,
+    });
+  }
+
+  const { data: organizationUser, error: orgUserError } = await supabase
     .from("organization_users")
     .select("*")
     .eq("user_id", user.id)
     .eq("status", "active")
     .single();
+
+  if (orgUserError) {
+    // PGRST116 means "no rows found" which is a valid state (user may not belong to an org yet)
+    const code = (orgUserError as { code?: string }).code;
+    if (code !== "PGRST116") {
+      console.error("[getCurrentUser] Organization user query failed:", {
+        message: orgUserError.message,
+        code,
+        details: (orgUserError as { details?: string }).details,
+        userId: user.id,
+      });
+    }
+  }
 
   return {
     user: {

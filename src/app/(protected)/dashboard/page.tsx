@@ -24,7 +24,7 @@ export default async function DashboardPage() {
 
   const role = getUserRole(currentUser);
   const organizationId = await getUserOrganizationId();
-  const firstName = currentUser.profile?.first_name ?? null;
+  const firstName = currentUser.profile?.full_name ?? null;
 
   // ── Solicitor dashboard ─────────────────────────────────────────────────────
   if (role === "solicitor") {
