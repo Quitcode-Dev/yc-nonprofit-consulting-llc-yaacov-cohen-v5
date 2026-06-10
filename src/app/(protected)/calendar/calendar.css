@@ -1,0 +1,99 @@
+/* FullCalendar style overrides */
+
+.fc {
+  font-family: inherit;
+  font-size: 0.875rem;
+}
+
+/* Remove default FullCalendar border radius on toolbar */
+.fc .fc-toolbar {
+  display: none; /* We use our own toolbar */
+}
+
+/* Day number styling */
+.fc .fc-daygrid-day-number {
+  color: inherit;
+  text-decoration: none;
+  padding: 4px 8px;
+  font-size: 0.8rem;
+}
+
+/* Today highlight */
+.fc .fc-day-today {
+  background-color: hsl(var(--accent) / 0.3) !important;
+}
+
+/* Event styles */
+.fc-event {
+  cursor: pointer;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 1px 4px !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+}
+
+.fc-event:hover {
+  opacity: 0.85;
+}
+
+/* Pending — blue */
+.fc-event.event-pending {
+  background-color: #3b82f6 !important;
+  color: #ffffff !important;
+}
+
+/* Completed — green */
+.fc-event.event-completed {
+  background-color: #22c55e !important;
+  color: #ffffff !important;
+}
+
+/* Overdue — red */
+.fc-event.event-overdue {
+  background-color: #ef4444 !important;
+  color: #ffffff !important;
+}
+
+/* Remove default dotted border on events */
+.fc-daygrid-event {
+  white-space: normal !important;
+  align-items: flex-start !important;
+}
+
+/* Header cells */
+.fc .fc-col-header-cell {
+  background-color: hsl(var(--muted) / 0.4);
+  padding: 6px 0;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.fc .fc-col-header-cell-cushion {
+  color: hsl(var(--muted-foreground));
+  text-decoration: none;
+}
+
+/* Cell borders */
+.fc .fc-scrollgrid {
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border-color: hsl(var(--border)) !important;
+}
+
+.fc .fc-scrollgrid td,
+.fc .fc-scrollgrid th {
+  border-color: hsl(var(--border)) !important;
+}
+
+/* More events link */
+.fc .fc-daygrid-more-link {
+  font-size: 0.7rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.fc .fc-daygrid-more-link:hover {
+  color: hsl(var(--foreground));
+}
