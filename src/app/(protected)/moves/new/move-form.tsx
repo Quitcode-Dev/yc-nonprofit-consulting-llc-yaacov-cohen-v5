@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { MoveIdeaSelector, type MoveIdea } from "@/components/move-idea-selector";
 import { createMove, type CreateMoveState } from "../actions";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -28,6 +29,8 @@ interface MoveFormProps {
   moveIdeas: MoveIdeaOption[];
   /** Pre-selected donor ID from query param */
   preselectedDonorId?: string;
+  /** The current user's organisation id, passed to the selector */
+  organizationId: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -49,8 +52,9 @@ function todayString(): string {
 
 export default function MoveForm({
   donors,
-  moveIdeas,
+  moveIdeas: _moveIdeas,
   preselectedDonorId,
+  organizationId,
 }: MoveFormProps) {
   const [state, formAction, isPending] = useActionState(
     createMove,
@@ -61,38 +65,29 @@ export default function MoveForm({
   const [selectedDonorId, setSelectedDonorId] = useState<string>(
     preselectedDonorId ?? ""
   );
-  const [selectedIdeaId, setSelectedIdeaId] = useState<string>("");
+  const [selectedIdea, setSelectedIdea] = useState<MoveIdea | null>(null);
   const [title, setTitle] = useState<string>("");
 
   // Donor search filter
   const [donorSearch, setDonorSearch] = useState<string>("");
-  // Move idea search filter
-  const [ideaSearch, setIdeaSearch] = useState<string>("");
 
   // Auto-populate title when a move idea is selected
   useEffect(() => {
-    if (selectedIdeaId) {
-      const idea = moveIdeas.find((i) => i.id === selectedIdeaId);
-      if (idea) {
-        setTitle(idea.title);
-      }
-    } else {
-      setTitle("");
+    if (selectedIdea) {
+      setTitle(selectedIdea.title);
     }
-  }, [selectedIdeaId, moveIdeas]);
+  }, [selectedIdea]);
+
+  // Handler for MoveIdeaSelector — preserves other form state
+  function handleIdeaSelect(idea: MoveIdea) {
+    setSelectedIdea(idea);
+  }
 
   // Filtered donors
   const filteredDonors = donors.filter((d) => {
     const fullName = `${d.firstName} ${d.lastName}`.toLowerCase();
     return fullName.includes(donorSearch.toLowerCase());
   });
-
-  // Filtered + grouped move ideas
-  const filteredIdeas = moveIdeas.filter((i) =>
-    i.title.toLowerCase().includes(ideaSearch.toLowerCase())
-  );
-  const globalIdeas = filteredIdeas.filter((i) => i.organizationId === null);
-  const orgIdeas = filteredIdeas.filter((i) => i.organizationId !== null);
 
   const todayStr = todayString();
 
@@ -191,116 +186,20 @@ export default function MoveForm({
         </CardHeader>
         <CardContent className="space-y-3">
           {/* Hidden field for form submission */}
-          <input type="hidden" name="moveIdeaId" value={selectedIdeaId} />
+          <input
+            type="hidden"
+            name="moveIdeaId"
+            value={selectedIdea?.id ?? ""}
+          />
 
-          {/* Search box */}
           <div className="space-y-2">
-            <Label htmlFor="ideaSearch">Search Move Ideas</Label>
-            <Input
-              id="ideaSearch"
-              type="search"
-              placeholder="Type to search move ideas…"
-              value={ideaSearch}
-              onChange={(e) => setIdeaSearch(e.target.value)}
-              autoComplete="off"
+            <Label htmlFor="moveIdeaSelector">Select Move Idea</Label>
+            <MoveIdeaSelector
+              value={selectedIdea}
+              onSelect={handleIdeaSelect}
+              organizationId={organizationId}
             />
           </div>
-
-          {/* Grouped list */}
-          <div
-            className="border rounded-md max-h-64 overflow-y-auto"
-            role="listbox"
-            aria-label="Move Ideas"
-          >
-            {filteredIdeas.length === 0 ? (
-              <p className="text-sm text-muted-foreground p-3">
-                No move ideas found.
-              </p>
-            ) : (
-              <>
-                {/* Global ideas group */}
-                {globalIdeas.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-3 py-1.5 bg-muted/50 sticky top-0">
-                      Global Library
-                    </p>
-                    {globalIdeas.map((idea) => {
-                      const isSelected = idea.id === selectedIdeaId;
-                      return (
-                        <button
-                          key={idea.id}
-                          type="button"
-                          role="option"
-                          aria-selected={isSelected}
-                          onClick={() =>
-                            setSelectedIdeaId(isSelected ? "" : idea.id)
-                          }
-                          className={`w-full text-left px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground ${
-                            isSelected
-                              ? "bg-accent text-accent-foreground font-medium"
-                              : ""
-                          }`}
-                        >
-                          <span>{idea.title}</span>
-                          {idea.category && (
-                            <span className="ml-2 text-xs text-muted-foreground">
-                              {idea.category}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Org-specific ideas group */}
-                {orgIdeas.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-3 py-1.5 bg-muted/50 sticky top-0">
-                      Your Organization
-                    </p>
-                    {orgIdeas.map((idea) => {
-                      const isSelected = idea.id === selectedIdeaId;
-                      return (
-                        <button
-                          key={idea.id}
-                          type="button"
-                          role="option"
-                          aria-selected={isSelected}
-                          onClick={() =>
-                            setSelectedIdeaId(isSelected ? "" : idea.id)
-                          }
-                          className={`w-full text-left px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground ${
-                            isSelected
-                              ? "bg-accent text-accent-foreground font-medium"
-                              : ""
-                          }`}
-                        >
-                          <span>{idea.title}</span>
-                          {idea.category && (
-                            <span className="ml-2 text-xs text-muted-foreground">
-                              {idea.category}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Selected idea display */}
-          {selectedIdeaId && (
-            <p className="text-sm text-muted-foreground">
-              Selected:{" "}
-              <span className="text-foreground font-medium">
-                {moveIdeas.find((i) => i.id === selectedIdeaId)?.title ??
-                  selectedIdeaId}
-              </span>
-            </p>
-          )}
 
           {state.errors.moveIdeaId && (
             <p className="text-sm text-destructive" role="alert">
