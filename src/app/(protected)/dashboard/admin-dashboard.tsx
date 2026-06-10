@@ -1,3 +1,6 @@
+// Dashboard data is revalidated every 60 seconds via Next.js ISR. No manual refresh required.
+export const revalidate = 60;
+
 import React from "react";
 import Link from "next/link";
 import { createServerClient } from "@/lib/supabase/server";

@@ -7,8 +7,13 @@ import AdminDashboard from "./admin-dashboard";
 //
 // Role-aware server component:
 //   - solicitor   → SolicitorDashboard (assigned donors + pending moves)
-//   - org_admin / super_admin → admin dashboard (placeholder, US-048)
+//   - org_admin / super_admin → AdminDashboard (org metrics + leaderboard)
 //   - other roles → basic welcome view
+//
+// Organization isolation: organizationId is always resolved server-side via
+// getUserOrganizationId() and passed down to child components. No child
+// component may derive or hard-code its own org ID. If a solicitor or
+// org_admin lacks an org association, they are redirected to /error.
 
 export default async function DashboardPage() {
   const currentUser = await getCurrentUser();
@@ -24,17 +29,8 @@ export default async function DashboardPage() {
   // ── Solicitor dashboard ─────────────────────────────────────────────────────
   if (role === "solicitor") {
     if (!organizationId) {
-      // Solicitor with no org: show a basic message
-      return (
-        <div className="space-y-6">
-          <h1 className="text-2xl font-bold">
-            Welcome back{firstName ? `, ${firstName}` : ""}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            You are not currently associated with an organization.
-          </p>
-        </div>
-      );
+      // Solicitors must belong to an org — redirect to error page
+      redirect("/error");
     }
 
     return (
@@ -49,17 +45,8 @@ export default async function DashboardPage() {
   // ── Admin dashboard (org_admin / super_admin) ────────────────────────────────
   if (role === "org_admin" || role === "super_admin") {
     if (!organizationId) {
-      const displayName = firstName ? `Welcome back, ${firstName}` : "Welcome back";
-      return (
-        <div className="space-y-6">
-          <div>
-            <h1 className="text-2xl font-bold">{displayName}</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              No organization associated with your account.
-            </p>
-          </div>
-        </div>
-      );
+      // org_admin must belong to an org — redirect to error page
+      redirect("/error");
     }
 
     return (
