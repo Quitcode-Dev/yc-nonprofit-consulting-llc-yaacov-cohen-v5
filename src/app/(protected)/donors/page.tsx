@@ -32,6 +32,11 @@ interface DonorRow {
   solicitorName: string | null;
 }
 
+interface FilterIndicatorProps {
+  solicitorName: string;
+  clearHref: string;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const VALID_SORT_FIELDS: SortField[] = ["score", "name", "tier"];
@@ -75,6 +80,25 @@ function buildUrl(
   return `/donors?${params.toString()}`;
 }
 
+// ─── Filter Indicator Component ───────────────────────────────────────────────
+
+function FilterIndicator({ solicitorName, clearHref }: FilterIndicatorProps) {
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <span className="text-muted-foreground">
+        Filtered by:{" "}
+        <span className="font-medium text-foreground">{solicitorName}</span>
+      </span>
+      <Link
+        href={clearHref}
+        className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground transition-colors"
+      >
+        Clear
+      </Link>
+    </div>
+  );
+}
+
 // ─── Sort Header Component ────────────────────────────────────────────────────
 
 function SortIndicator({
@@ -104,6 +128,7 @@ interface SearchParams {
   sort?: string;
   dir?: string;
   search?: string;
+  solicitor?: string;
 }
 
 export default async function DonorListPage({
@@ -131,6 +156,7 @@ export default async function DonorListPage({
   const pageSize = parsePageSize(resolvedParams.pageSize);
   const page = parsePage(resolvedParams.page);
   const search = resolvedParams.search?.trim() ?? "";
+  const solicitorFilter = resolvedParams.solicitor?.trim() ?? "";
 
   // Helper to build page URLs preserving current params
   const currentParams: Record<string, string | undefined> = {
@@ -138,6 +164,7 @@ export default async function DonorListPage({
     dir: sortDir,
     pageSize: String(pageSize),
     search: search || undefined,
+    solicitor: solicitorFilter || undefined,
   };
 
   // ─── Build Supabase query ─────────────────────────────────────────────────
@@ -149,6 +176,10 @@ export default async function DonorListPage({
     .from("donors")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId);
+
+  if (solicitorFilter) {
+    countQuery = countQuery.eq("assigned_solicitor_id", solicitorFilter);
+  }
 
   if (search) {
     countQuery = countQuery.or(
@@ -170,6 +201,10 @@ export default async function DonorListPage({
       "id, first_name, last_name, email, score, tier, assigned_solicitor_id"
     )
     .eq("organization_id", organizationId);
+
+  if (solicitorFilter) {
+    dataQuery = dataQuery.eq("assigned_solicitor_id", solicitorFilter);
+  }
 
   if (search) {
     dataQuery = dataQuery.or(
@@ -247,6 +282,34 @@ export default async function DonorListPage({
       : null,
   }));
 
+  // Resolve the name for the solicitor filter indicator
+  let filteredSolicitorName: string | null = null;
+  if (solicitorFilter) {
+    // May already be in the map from page results, or we need to fetch it
+    filteredSolicitorName = solicitorMap.get(solicitorFilter) ?? null;
+
+    if (!filteredSolicitorName) {
+      const { data: solProfile } = await supabase
+        .from("profiles")
+        .select("id, first_name, last_name, email")
+        .eq("id", solicitorFilter)
+        .single();
+
+      if (solProfile) {
+        const p = solProfile as {
+          id: string;
+          first_name: string | null;
+          last_name: string | null;
+          email: string | null;
+        };
+        filteredSolicitorName =
+          [p.first_name, p.last_name].filter(Boolean).join(" ") ||
+          p.email ||
+          solicitorFilter;
+      }
+    }
+  }
+
   // ─── Sort header URL builder ──────────────────────────────────────────────
 
   function sortHref(field: SortField): string {
@@ -261,6 +324,12 @@ export default async function DonorListPage({
   function pagHref(p: number): string {
     return buildUrl({ page: p }, currentParams);
   }
+
+  // URL to clear the solicitor filter (preserve all other params)
+  const clearSolicitorHref = buildUrl(
+    { solicitor: undefined, page: 1 },
+    currentParams
+  );
 
   const pageTitle = role === "solicitor" ? "My Donors" : "All Donors";
 
@@ -279,14 +348,25 @@ export default async function DonorListPage({
         </Button>
       </div>
 
+      {/* Solicitor filter indicator */}
+      {solicitorFilter && filteredSolicitorName && (
+        <FilterIndicator
+          solicitorName={filteredSolicitorName}
+          clearHref={clearSolicitorHref}
+        />
+      )}
+
       {/* Search + Page Size controls */}
       <div className="flex flex-wrap items-center gap-3">
         {/* Search — client-side form that replaces the URL */}
         <form method="GET" action="/donors" className="flex-1 min-w-[200px] max-w-sm">
-          {/* Preserve sort/dir/pageSize when searching */}
+          {/* Preserve sort/dir/pageSize/solicitor when searching */}
           <input type="hidden" name="sort" value={sortField} />
           <input type="hidden" name="dir" value={sortDir} />
           <input type="hidden" name="pageSize" value={String(pageSize)} />
+          {solicitorFilter && (
+            <input type="hidden" name="solicitor" value={solicitorFilter} />
+          )}
           <input
             type="search"
             name="search"
@@ -301,6 +381,9 @@ export default async function DonorListPage({
           <input type="hidden" name="sort" value={sortField} />
           <input type="hidden" name="dir" value={sortDir} />
           {search && <input type="hidden" name="search" value={search} />}
+          {solicitorFilter && (
+            <input type="hidden" name="solicitor" value={solicitorFilter} />
+          )}
           <input type="hidden" name="page" value="1" />
           <div className="flex items-center gap-2">
             <label
