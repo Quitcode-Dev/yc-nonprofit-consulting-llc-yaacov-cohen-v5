@@ -24,6 +24,7 @@ const navItemsByRole: Record<string, NavItem[]> = {
     { label: "Calendar", href: "/calendar" },
     { label: "Settings", href: "/settings" },
     { label: "Import", href: "/settings/import" },
+    { label: "Move Ideas", href: "/settings/move-ideas" },
   ],
   fundraiser: [
     { label: "Dashboard", href: "/dashboard" },
