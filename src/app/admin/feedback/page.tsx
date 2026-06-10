@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import Pagination from "@/components/pagination";
+import { FeedbackFilters } from "./feedback-filters";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -96,9 +97,7 @@ function getStatusVariant(
   }
 }
 
-function getUserName(
-  profile: FeedbackRow["profiles"]
-): string {
+function getUserName(profile: FeedbackRow["profiles"]): string {
   if (!profile) return "—";
   const name = [profile.first_name, profile.last_name]
     .filter(Boolean)
@@ -111,63 +110,169 @@ function getUserName(
 export default async function FeedbackInboxPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{
+    page?: string;
+    category?: string;
+    org?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    sort?: string;
+  }>;
 }) {
   await requireRole(["super_admin"]);
 
-  const { page: pageParam } = await searchParams;
+  const {
+    page: pageParam,
+    category,
+    org,
+    status,
+    dateFrom,
+    dateTo,
+    sort,
+  } = await searchParams;
+
   const currentPage = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
   const offset = (currentPage - 1) * PAGE_SIZE;
 
   const supabase = await createServerClient();
 
-  // Fetch total count for pagination
-  const { count: totalCount } = await supabase
+  // ── Fetch distinct organization names for the filter dropdown ───────────────
+  const { data: orgRows } = await supabase
+    .from("organizations")
+    .select("name")
+    .order("name", { ascending: true });
+
+  const organizationNames: string[] = (orgRows ?? []).map(
+    (r: { name: string }) => r.name
+  );
+
+  // ── Build base query with optional filters ──────────────────────────────────
+
+  // Helper that constructs a filtered query chain (used for both count + data)
+  function buildQuery() {
+    let q = supabase.from("feedback").select(
+      `
+        id,
+        title,
+        category,
+        status,
+        created_at,
+        profiles (
+          first_name,
+          last_name,
+          email
+        ),
+        organizations (
+          name
+        )
+      `,
+      { count: "exact" }
+    );
+
+    if (category) {
+      q = q.eq("category", category);
+    }
+
+    if (status) {
+      q = q.eq("status", status);
+    }
+
+    if (dateFrom) {
+      // Include full day start
+      q = q.gte("created_at", `${dateFrom}T00:00:00.000Z`);
+    }
+
+    if (dateTo) {
+      // Include full day end
+      q = q.lte("created_at", `${dateTo}T23:59:59.999Z`);
+    }
+
+    return q;
+  }
+
+  // ── Count query ─────────────────────────────────────────────────────────────
+
+  // For org filter we need to filter via the join — get matching org ids first
+  let orgIds: string[] | null = null;
+  if (org) {
+    const { data: matchedOrgs } = await supabase
+      .from("organizations")
+      .select("id")
+      .eq("name", org);
+    orgIds = (matchedOrgs ?? []).map((r: { id: string }) => r.id);
+  }
+
+  // Build count query
+  let countQ = supabase
     .from("feedback")
     .select("id", { count: "exact", head: true });
 
+  if (category) countQ = countQ.eq("category", category);
+  if (status) countQ = countQ.eq("status", status);
+  if (dateFrom) countQ = countQ.gte("created_at", `${dateFrom}T00:00:00.000Z`);
+  if (dateTo) countQ = countQ.lte("created_at", `${dateTo}T23:59:59.999Z`);
+  if (orgIds !== null) {
+    if (orgIds.length === 0) {
+      // No matching org → force zero results
+      countQ = countQ.in("organization_id", ["00000000-0000-0000-0000-000000000000"]);
+    } else {
+      countQ = countQ.in("organization_id", orgIds);
+    }
+  }
+
+  const { count: totalCount } = await countQ;
   const total = totalCount ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // Fetch paginated feedback joined with profiles and organizations
-  const { data: feedbackData } = await supabase
-    .from("feedback")
-    .select(
-      `
-      id,
-      title,
-      category,
-      status,
-      created_at,
-      profiles (
-        first_name,
-        last_name,
-        email
-      ),
-      organizations (
-        name
-      )
-    `
-    )
-    .order("created_at", { ascending: false })
+  // ── Data query ──────────────────────────────────────────────────────────────
+
+  const ascending = sort === "oldest";
+
+  let dataQ = buildQuery()
+    .order("created_at", { ascending })
     .range(offset, offset + PAGE_SIZE - 1);
 
+  if (orgIds !== null) {
+    if (orgIds.length === 0) {
+      dataQ = dataQ.in("organization_id", ["00000000-0000-0000-0000-000000000000"]);
+    } else {
+      dataQ = dataQ.in("organization_id", orgIds);
+    }
+  }
+
+  const { data: feedbackData } = await dataQ;
+
   // Normalize joined rows: Supabase may return arrays for 1-to-many relations
-  const rows: FeedbackRow[] = ((feedbackData ?? []) as unknown as FeedbackRowRaw[]).map(
-    (raw) => ({
-      id: raw.id,
-      title: raw.title,
-      category: raw.category,
-      status: raw.status as FeedbackRow["status"],
-      created_at: raw.created_at,
-      profiles: Array.isArray(raw.profiles)
-        ? (raw.profiles[0] ?? null)
-        : raw.profiles,
-      organizations: Array.isArray(raw.organizations)
-        ? (raw.organizations[0] ?? null)
-        : raw.organizations,
-    })
-  );
+  const rows: FeedbackRow[] = (
+    (feedbackData ?? []) as unknown as FeedbackRowRaw[]
+  ).map((raw) => ({
+    id: raw.id,
+    title: raw.title,
+    category: raw.category,
+    status: raw.status as FeedbackRow["status"],
+    created_at: raw.created_at,
+    profiles: Array.isArray(raw.profiles)
+      ? (raw.profiles[0] ?? null)
+      : raw.profiles,
+    organizations: Array.isArray(raw.organizations)
+      ? (raw.organizations[0] ?? null)
+      : raw.organizations,
+  }));
+
+  // ── Build pagination href preserving current filters ────────────────────────
+
+  function buildPaginationHref(page: number): string {
+    const params = new URLSearchParams();
+    if (category) params.set("category", category);
+    if (org) params.set("org", org);
+    if (status) params.set("status", status);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    if (sort) params.set("sort", sort);
+    params.set("page", String(page));
+    return `/admin/feedback?${params.toString()}`;
+  }
 
   return (
     <div className="space-y-6">
@@ -180,6 +285,9 @@ export default async function FeedbackInboxPage({
           </p>
         </div>
       </div>
+
+      {/* Filters */}
+      <FeedbackFilters organizations={organizationNames} />
 
       {/* Table */}
       {rows.length === 0 ? (
@@ -267,7 +375,7 @@ export default async function FeedbackInboxPage({
             <Pagination
               currentPage={currentPage}
               totalPages={totalPages}
-              buildHref={(page) => `/admin/feedback?page=${page}`}
+              buildHref={buildPaginationHref}
             />
           )}
         </>
