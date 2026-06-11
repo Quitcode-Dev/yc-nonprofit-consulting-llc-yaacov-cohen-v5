@@ -28,11 +28,11 @@ type StatusFilter = "all" | "pending" | "completed";
 
 interface MoveRow {
   id: string;
-  title: string;
+  name: string;
   due_date: string;
-  status: "pending" | "completed";
+  is_completed: boolean;
   donor_id: string;
-  solicitor_id: string;
+  assigned_to: string | null;
   donorName: string;
   solicitorName: string | null;
   displayStatus: "pending" | "completed" | "overdue";
@@ -148,40 +148,26 @@ export default async function MovesListPage({
   // ── Fetch org solicitors for admin filter dropdown ──────────────────────────
   let solicitorOptions: SolicitorOption[] = [];
   if (isAdmin) {
+    // Assignable solicitors are active org members in user_roles. The id stored
+    // on moves.assigned_to = user_roles.id; display name = full_name.
     const { data: orgUsers } = await supabase
-      .from("organization_users")
-      .select("user_id, role")
+      .from("user_roles")
+      .select("id, full_name, email")
       .eq("organization_id", organizationId)
-      .eq("status", "active")
-      .eq("role", "solicitor");
+      .eq("is_active", true);
 
-    const solicitorIds = (
-      (orgUsers ?? []) as Array<{ user_id: string; role: string }>
-    ).map((ou) => ou.user_id);
+    solicitorOptions = (
+      (orgUsers ?? []) as Array<{
+        id: string;
+        full_name: string | null;
+        email: string | null;
+      }>
+    ).map((u) => ({
+      id: u.id,
+      name: u.full_name || u.email || u.id,
+    }));
 
-    if (solicitorIds.length > 0) {
-      const { data: solProfiles } = await supabase
-        .from("profiles")
-        .select("id, first_name, last_name, email")
-        .in("id", solicitorIds);
-
-      solicitorOptions = (
-        (solProfiles ?? []) as Array<{
-          id: string;
-          first_name: string | null;
-          last_name: string | null;
-          email: string | null;
-        }>
-      ).map((p) => ({
-        id: p.id,
-        name:
-          [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-          p.email ||
-          p.id,
-      }));
-
-      solicitorOptions.sort((a, b) => a.name.localeCompare(b.name));
-    }
+    solicitorOptions.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   // ── Count query ─────────────────────────────────────────────────────────────
@@ -191,13 +177,14 @@ export default async function MovesListPage({
     .eq("organization_id", organizationId);
 
   if (!isAdmin) {
-    countQuery = countQuery.eq("solicitor_id", currentUser.user.id);
+    // assigned_to references user_roles.id (organizationUser.id).
+    countQuery = countQuery.eq("assigned_to", currentUser.organizationUser?.id ?? "");
   } else if (solicitorFilter) {
-    countQuery = countQuery.eq("solicitor_id", solicitorFilter);
+    countQuery = countQuery.eq("assigned_to", solicitorFilter);
   }
 
   if (statusFilter !== "all") {
-    countQuery = countQuery.eq("status", statusFilter);
+    countQuery = countQuery.eq("is_completed", statusFilter === "completed");
   }
 
   // dateRange filter: expects "YYYY-MM-DD,YYYY-MM-DD"
@@ -221,17 +208,18 @@ export default async function MovesListPage({
   // ── Data query ──────────────────────────────────────────────────────────────
   let dataQuery = supabase
     .from("moves")
-    .select("id, title, due_date, status, donor_id, solicitor_id")
+    .select("id, name, due_date, is_completed, donor_id, assigned_to")
     .eq("organization_id", organizationId);
 
   if (!isAdmin) {
-    dataQuery = dataQuery.eq("solicitor_id", currentUser.user.id);
+    // assigned_to references user_roles.id (organizationUser.id).
+    dataQuery = dataQuery.eq("assigned_to", currentUser.organizationUser?.id ?? "");
   } else if (solicitorFilter) {
-    dataQuery = dataQuery.eq("solicitor_id", solicitorFilter);
+    dataQuery = dataQuery.eq("assigned_to", solicitorFilter);
   }
 
   if (statusFilter !== "all") {
-    dataQuery = dataQuery.eq("status", statusFilter);
+    dataQuery = dataQuery.eq("is_completed", statusFilter === "completed");
   }
 
   if (dateRange) {
@@ -249,11 +237,11 @@ export default async function MovesListPage({
 
   const rawMoves = (movesRaw ?? []) as Array<{
     id: string;
-    title: string;
+    name: string;
     due_date: string;
-    status: "pending" | "completed";
+    is_completed: boolean;
     donor_id: string;
-    solicitor_id: string;
+    assigned_to: string | null;
   }>;
 
   // ── Fetch donor names ───────────────────────────────────────────────────────
@@ -278,27 +266,26 @@ export default async function MovesListPage({
   }
 
   // ── Fetch solicitor names (admin view) ──────────────────────────────────────
+  // moves.assigned_to references user_roles.id; display name = full_name.
   const solicitorProfileMap = new Map<string, string>();
 
   if (isAdmin && rawMoves.length > 0) {
-    const uniqueSolicitorIds = [...new Set(rawMoves.map((m) => m.solicitor_id))];
+    const uniqueSolicitorIds = [
+      ...new Set(rawMoves.map((m) => m.assigned_to).filter((v): v is string => !!v)),
+    ];
     if (uniqueSolicitorIds.length > 0) {
       const { data: profData } = await supabase
-        .from("profiles")
-        .select("id, first_name, last_name, email")
+        .from("user_roles")
+        .select("id, full_name, email")
         .in("id", uniqueSolicitorIds);
 
       if (profData) {
         for (const p of profData as Array<{
           id: string;
-          first_name: string | null;
-          last_name: string | null;
+          full_name: string | null;
           email: string | null;
         }>) {
-          const name =
-            [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-            p.email ||
-            p.id;
+          const name = p.full_name || p.email || p.id;
           solicitorProfileMap.set(p.id, name);
         }
       }
@@ -308,16 +295,20 @@ export default async function MovesListPage({
   // ── Compute display status (pending / completed / overdue) ──────────────────
   const moves: MoveRow[] = rawMoves.map((m) => ({
     id: m.id,
-    title: m.title,
+    name: m.name,
     due_date: m.due_date,
-    status: m.status,
+    is_completed: m.is_completed,
     donor_id: m.donor_id,
-    solicitor_id: m.solicitor_id,
+    assigned_to: m.assigned_to,
     donorName: donorMap.get(m.donor_id) ?? "Unknown Donor",
     solicitorName: isAdmin
-      ? (solicitorProfileMap.get(m.solicitor_id) ?? null)
+      ? (m.assigned_to ? solicitorProfileMap.get(m.assigned_to) ?? null : null)
       : null,
-    displayStatus: getDisplayStatus(m),
+    // getDisplayStatus expects a `status` string; derive it from is_completed.
+    displayStatus: getDisplayStatus({
+      status: m.is_completed ? "completed" : "pending",
+      due_date: m.due_date,
+    }),
   }));
 
   // ── URL builders ────────────────────────────────────────────────────────────
@@ -469,7 +460,7 @@ export default async function MovesListPage({
                         href={`/moves/${move.id}`}
                         className="hover:underline"
                       >
-                        {move.title}
+                        {move.name}
                       </Link>
                     </TableCell>
 

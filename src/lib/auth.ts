@@ -54,49 +54,75 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     return null;
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
+  // Identity, role, and organization membership all live in `user_roles`.
+  // A user may have several active rows (one per organization); a super_admin
+  // row has organization_id = null. We derive the legacy `profile` /
+  // `organizationUser` shapes from these rows so existing callers keep working.
+  const { data: roleRows, error: rolesError } = await supabase
+    .from("user_roles")
     .select("*")
-    .eq("id", user.id)
-    .single();
+    .eq("user_id", user.id)
+    .eq("is_active", true);
 
-  if (profileError) {
-    console.error("[getCurrentUser] Profile query failed:", {
-      message: profileError.message,
-      code: (profileError as { code?: string }).code,
-      details: (profileError as { details?: string }).details,
-      hint: (profileError as { hint?: string }).hint,
+  if (rolesError) {
+    console.error("[getCurrentUser] user_roles query failed:", {
+      message: rolesError.message,
+      code: (rolesError as { code?: string }).code,
+      details: (rolesError as { details?: string }).details,
+      hint: (rolesError as { hint?: string }).hint,
       userId: user.id,
     });
   }
 
-  const { data: organizationUser, error: orgUserError } = await supabase
-    .from("organization_users")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("status", "active")
-    .single();
+  const rows = roleRows ?? [];
+  const superAdminRow = rows.find((r) => r.role === "super_admin") ?? null;
+  const orgRow = rows.find((r) => r.organization_id != null) ?? null;
+  const baseRow = superAdminRow ?? orgRow ?? rows[0] ?? null;
 
-  if (orgUserError) {
-    // PGRST116 means "no rows found" which is a valid state (user may not belong to an org yet)
-    const code = (orgUserError as { code?: string }).code;
-    if (code !== "PGRST116") {
-      console.error("[getCurrentUser] Organization user query failed:", {
-        message: orgUserError.message,
-        code,
-        details: (orgUserError as { details?: string }).details,
-        userId: user.id,
-      });
-    }
-  }
+  // The live `user_roles.role` uses "organization_admin"; the rest of the app
+  // (UserRole enum, requireRole calls, UI branches) speaks "org_admin". Map at
+  // this boundary so downstream role checks keep working unchanged.
+  const normalizeRole = (role: string | null): string => {
+    if (role === "organization_admin") return "org_admin";
+    if (role === "organization_solicitor") return "solicitor";
+    return role ?? "solicitor";
+  };
+
+  const profile: CurrentUser["profile"] = baseRow
+    ? {
+        id: user.id,
+        email: baseRow.email ?? user.email ?? null,
+        full_name: baseRow.full_name ?? null,
+        avatar_url: null,
+        is_super_admin: superAdminRow !== null,
+        created_at: baseRow.created_at,
+        updated_at: baseRow.updated_at,
+      }
+    : null;
+
+  const organizationUser: CurrentUser["organizationUser"] = orgRow
+    ? {
+        id: orgRow.id,
+        organization_id: orgRow.organization_id,
+        user_id: orgRow.user_id,
+        role: normalizeRole(orgRow.role),
+        status: orgRow.is_active ? "active" : "inactive",
+        invited_email: null,
+        invited_at: null,
+        invitation_token: null,
+        invitation_expires_at: null,
+        joined_at: null,
+        created_at: orgRow.created_at,
+      }
+    : null;
 
   return {
     user: {
       id: user.id,
       email: user.email ?? "",
     },
-    profile: profile ?? null,
-    organizationUser: organizationUser ?? null,
+    profile,
+    organizationUser,
   };
 }
 
@@ -215,16 +241,24 @@ export async function requireSolicitorDonorAccess(
   }
 
   // Org Admins bypass donor access checks
-  if (currentUser.organizationUser?.role === "org_admin") {
+  if (
+    currentUser.organizationUser?.role === "organization_admin" ||
+    currentUser.organizationUser?.role === "org_admin"
+  ) {
     return currentUser;
   }
 
-  // For solicitors and other roles, verify assignment
+  // For solicitors and other roles, verify assignment.
+  // NOTE: in the live schema a solicitor is identified by their user_roles row
+  // id (organizationUser.id), NOT the auth user id. Donor↔solicitor links live
+  // in donors.primary_solicitor_id and the donor_assignments join table, both
+  // of which reference user_roles.id.
   const supabase = await createServerClient();
+  const userRoleId = currentUser.organizationUser?.id ?? null;
 
   const { data: donor, error } = await supabase
     .from("donors")
-    .select("id, assigned_solicitor_id, organization_id")
+    .select("id, primary_solicitor_id, organization_id")
     .eq("id", donorId)
     .single();
 
@@ -246,8 +280,22 @@ export async function requireSolicitorDonorAccess(
     });
   }
 
-  // Verify the donor is assigned to this solicitor
-  if (donor.assigned_solicitor_id !== currentUser.user.id) {
+  // Assigned as primary solicitor?
+  let assigned = userRoleId !== null && donor.primary_solicitor_id === userRoleId;
+
+  // Otherwise check the donor_assignments join table for a secondary assignment.
+  if (!assigned && userRoleId !== null) {
+    const { data: assignment } = await supabase
+      .from("donor_assignments")
+      .select("id")
+      .eq("donor_id", donorId)
+      .eq("user_role_id", userRoleId)
+      .limit(1)
+      .maybeSingle();
+    assigned = assignment != null;
+  }
+
+  if (!assigned) {
     throw new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
       headers: { "Content-Type": "application/json" },

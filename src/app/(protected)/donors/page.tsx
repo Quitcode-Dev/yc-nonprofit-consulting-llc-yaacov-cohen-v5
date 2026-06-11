@@ -26,9 +26,11 @@ interface DonorRow {
   first_name: string;
   last_name: string;
   email: string | null;
-  score: number | null;
+  total_score: number | null;
+  // SCHEMA-GAP: donors has no 'tier' column in live schema
   tier: string | null;
-  assigned_solicitor_id: string | null;
+  primary_solicitor_id: string | null;
+  primary_solicitor_name: string | null;
   solicitorName: string | null;
 }
 
@@ -178,7 +180,7 @@ export default async function DonorListPage({
     .eq("organization_id", organizationId);
 
   if (solicitorFilter) {
-    countQuery = countQuery.eq("assigned_solicitor_id", solicitorFilter);
+    countQuery = countQuery.eq("primary_solicitor_id", solicitorFilter);
   }
 
   if (search) {
@@ -195,15 +197,16 @@ export default async function DonorListPage({
   const to = from + pageSize - 1;
 
   // Data query
+  // SCHEMA-GAP: donors has no 'tier' column in live schema; not selected.
   let dataQuery = supabase
     .from("donors")
     .select(
-      "id, first_name, last_name, email, score, tier, assigned_solicitor_id"
+      "id, first_name, last_name, email, total_score, primary_solicitor_id, primary_solicitor_name"
     )
     .eq("organization_id", organizationId);
 
   if (solicitorFilter) {
-    dataQuery = dataQuery.eq("assigned_solicitor_id", solicitorFilter);
+    dataQuery = dataQuery.eq("primary_solicitor_id", solicitorFilter);
   }
 
   if (search) {
@@ -214,7 +217,7 @@ export default async function DonorListPage({
 
   // Apply sort
   if (sortField === "score") {
-    dataQuery = dataQuery.order("score", {
+    dataQuery = dataQuery.order("total_score", {
       ascending: sortDir === "asc",
       nullsFirst: false,
     });
@@ -223,10 +226,7 @@ export default async function DonorListPage({
       .order("last_name", { ascending: sortDir === "asc" })
       .order("first_name", { ascending: sortDir === "asc" });
   } else if (sortField === "tier") {
-    dataQuery = dataQuery.order("tier", {
-      ascending: sortDir === "asc",
-      nullsFirst: false,
-    });
+    // SCHEMA-GAP: donors has no 'tier' column in live schema; cannot sort by tier.
   }
 
   dataQuery = dataQuery.range(from, to);
@@ -237,49 +237,52 @@ export default async function DonorListPage({
     first_name: string;
     last_name: string;
     email: string | null;
-    score: number | null;
-    tier: string | null;
-    assigned_solicitor_id: string | null;
+    total_score: number | null;
+    primary_solicitor_id: string | null;
+    primary_solicitor_name: string | null;
   }>;
 
-  // Fetch solicitor profiles for display names
+  // Resolve solicitor display names. Prefer the denormalized
+  // donors.primary_solicitor_name; fall back to a user_roles lookup
+  // (primary_solicitor_id references user_roles.id) for any rows missing it.
+  const solicitorMap = new Map<string, string>();
+
   const solicitorIds = [
     ...new Set(
       rawDonors
-        .map((d) => d.assigned_solicitor_id)
+        .filter((d) => d.primary_solicitor_id && !d.primary_solicitor_name)
+        .map((d) => d.primary_solicitor_id)
         .filter((id): id is string => id !== null)
     ),
   ];
 
-  const solicitorMap = new Map<string, string>();
-
   if (solicitorIds.length > 0) {
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, first_name, last_name, email")
+    const { data: roleRows } = await supabase
+      .from("user_roles")
+      .select("id, full_name, email")
       .in("id", solicitorIds);
 
-    if (profiles) {
-      for (const p of profiles as Array<{
+    if (roleRows) {
+      for (const r of roleRows as Array<{
         id: string;
-        first_name: string | null;
-        last_name: string | null;
+        full_name: string | null;
         email: string | null;
       }>) {
-        const name =
-          [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-          p.email ||
-          p.id;
-        solicitorMap.set(p.id, name);
+        const name = r.full_name || r.email || r.id;
+        solicitorMap.set(r.id, name);
       }
     }
   }
 
   const donors: DonorRow[] = rawDonors.map((d) => ({
     ...d,
-    solicitorName: d.assigned_solicitor_id
-      ? (solicitorMap.get(d.assigned_solicitor_id) ?? null)
-      : null,
+    // SCHEMA-GAP: donors has no 'tier' column in live schema
+    tier: null,
+    solicitorName: d.primary_solicitor_name
+      ? d.primary_solicitor_name
+      : d.primary_solicitor_id
+        ? (solicitorMap.get(d.primary_solicitor_id) ?? null)
+        : null,
   }));
 
   // Resolve the name for the solicitor filter indicator
@@ -289,23 +292,20 @@ export default async function DonorListPage({
     filteredSolicitorName = solicitorMap.get(solicitorFilter) ?? null;
 
     if (!filteredSolicitorName) {
-      const { data: solProfile } = await supabase
-        .from("profiles")
-        .select("id, first_name, last_name, email")
+      // solicitorFilter is a user_roles.id (donors.primary_solicitor_id ref).
+      const { data: solRole } = await supabase
+        .from("user_roles")
+        .select("id, full_name, email")
         .eq("id", solicitorFilter)
         .single();
 
-      if (solProfile) {
-        const p = solProfile as {
+      if (solRole) {
+        const r = solRole as {
           id: string;
-          first_name: string | null;
-          last_name: string | null;
+          full_name: string | null;
           email: string | null;
         };
-        filteredSolicitorName =
-          [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-          p.email ||
-          solicitorFilter;
+        filteredSolicitorName = r.full_name || r.email || solicitorFilter;
       }
     }
   }
@@ -513,7 +513,7 @@ export default async function DonorListPage({
                       href={`/donors/${donor.id}`}
                       className="block w-full text-right"
                     >
-                      {donor.score ?? (
+                      {donor.total_score ?? (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </Link>

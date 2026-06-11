@@ -49,9 +49,11 @@ export default async function CreateMovePage({
     .order("first_name", { ascending: true });
 
   if (!isAdmin) {
+    // primary_solicitor_id references user_roles.id (organizationUser.id),
+    // not the auth user id.
     donorsQuery = donorsQuery.eq(
-      "assigned_solicitor_id",
-      currentUser.user.id
+      "primary_solicitor_id",
+      currentUser.organizationUser?.id ?? ""
     );
   }
 
@@ -74,21 +76,21 @@ export default async function CreateMovePage({
 
   const { data: ideasRaw } = await supabase
     .from("move_ideas")
-    .select("id, title, category, organization_id")
+    .select("id, name, organization_id")
     .or(`organization_id.is.null,organization_id.eq.${organizationId}`)
-    .order("title", { ascending: true });
+    .order("name", { ascending: true });
 
   const moveIdeas: MoveIdeaOption[] = (
     (ideasRaw ?? []) as Array<{
       id: string;
-      title: string;
-      category: string;
+      name: string;
       organization_id: string | null;
     }>
   ).map((i) => ({
     id: i.id,
-    title: i.title,
-    category: i.category,
+    title: i.name,
+    // SCHEMA-GAP: move_ideas has no `category` column in live schema
+    category: "",
     organizationId: i.organization_id,
   }));
 

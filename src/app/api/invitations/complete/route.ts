@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { validatePassword } from "@/lib/validators";
 
+const EXPIRED_OR_USED =
+  "This invitation link has expired or has already been used. Please contact your administrator for a new invitation.";
+
 export async function POST(request: NextRequest) {
   let body: { token?: string; firstName?: string; lastName?: string; password?: string };
 
@@ -35,55 +38,37 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = createServiceRoleClient();
 
-    // 1. Look up the invitation
-    const { data: orgUser, error: lookupError } = await supabase
-      .from("organization_users")
-      .select("id, invited_email, status, invited_at, organization_id, role")
-      .eq("invitation_token", token)
+    // 1. Look up the invitation in org_invites
+    const { data: invite, error: lookupError } = await supabase
+      .from("org_invites")
+      .select("id, email, accepted_at, expires_at, organization_id, role")
+      .eq("token", token)
       .single();
 
-    if (lookupError || !orgUser) {
+    if (lookupError || !invite) {
       return NextResponse.json(
-        {
-          success: false,
-          error:
-            "This invitation link has expired or has already been used. Please contact your administrator for a new invitation.",
-        },
+        { success: false, error: EXPIRED_OR_USED },
         { status: 400 }
       );
     }
 
-    // Check if already used
-    if (orgUser.status === "active") {
+    // Already accepted?
+    if (invite.accepted_at) {
       return NextResponse.json(
-        {
-          success: false,
-          error:
-            "This invitation link has expired or has already been used. Please contact your administrator for a new invitation.",
-        },
+        { success: false, error: EXPIRED_OR_USED },
         { status: 400 }
       );
     }
 
-    // Check if expired (48 hours)
-    if (orgUser.invited_at) {
-      const invitedAt = new Date(orgUser.invited_at);
-      const now = new Date();
-      const hoursDiff =
-        (now.getTime() - invitedAt.getTime()) / (1000 * 60 * 60);
-      if (hoursDiff > 48) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "This invitation link has expired or has already been used. Please contact your administrator for a new invitation.",
-          },
-          { status: 400 }
-        );
-      }
+    // Expired?
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      return NextResponse.json(
+        { success: false, error: EXPIRED_OR_USED },
+        { status: 400 }
+      );
     }
 
-    const email = orgUser.invited_email;
+    const email = invite.email;
 
     if (!email) {
       return NextResponse.json(
@@ -127,36 +112,38 @@ export async function POST(request: NextRequest) {
 
     const userId = authData.user.id;
 
-    // 3. Create profile record
-    const { error: profileError } = await supabase.from("profiles").upsert(
-      {
-        id: userId,
-        email,
-        first_name: firstName,
-        last_name: lastName,
-        is_super_admin: false,
-      },
-      { onConflict: "id" }
-    );
+    // 3. Create the org membership / identity row in user_roles, carrying the
+    //    role from the invite (e.g. organization_solicitor, organization_admin).
+    const { error: roleError } = await supabase.from("user_roles").insert({
+      user_id: userId,
+      organization_id: invite.organization_id,
+      role: invite.role,
+      email,
+      full_name: `${firstName} ${lastName}`.trim(),
+      is_active: true,
+      invited_by_user_id: null,
+    });
 
-    if (profileError) {
-      console.error("Failed to create profile:", profileError);
-      // Don't fail the whole flow — the user is created
+    if (roleError) {
+      console.error("Failed to create user_roles record:", roleError);
+      // Roll back the auth user so the invite can be retried cleanly.
+      await supabase.auth.admin.deleteUser(userId);
+      return NextResponse.json(
+        { success: false, error: "Failed to set up your account." },
+        { status: 500 }
+      );
     }
 
-    // 4. Update organization_users: set user_id, status to active, clear token
+    // 4. Mark the invitation accepted.
     const { error: updateError } = await supabase
-      .from("organization_users")
-      .update({
-        user_id: userId,
-        status: "active",
-        joined_at: new Date().toISOString(),
-        invitation_token: null,
-      })
-      .eq("id", orgUser.id);
+      .from("org_invites")
+      .update({ accepted_at: new Date().toISOString() })
+      .eq("id", invite.id);
 
     if (updateError) {
-      console.error("Failed to update organization_users:", updateError);
+      console.error("Failed to mark invite accepted:", updateError);
+      // Non-fatal: the account is usable; the invite token is single-use via
+      // the membership existing, but log for visibility.
     }
 
     // 5. Generate a magic link so the client can establish a session reliably

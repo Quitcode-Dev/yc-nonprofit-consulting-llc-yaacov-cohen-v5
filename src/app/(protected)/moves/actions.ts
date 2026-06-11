@@ -80,7 +80,7 @@ export async function createMove(
   // Verify donor exists and belongs to org
   const { data: donor, error: donorError } = await supabase
     .from("donors")
-    .select("id, assigned_solicitor_id, organization_id")
+    .select("id, primary_solicitor_id, organization_id")
     .eq("id", donorId)
     .eq("organization_id", organizationId)
     .single();
@@ -89,12 +89,14 @@ export async function createMove(
     return { errors: { donorId: "Donor not found." } };
   }
 
-  // Solicitors may only create moves for their assigned donors
+  // Solicitors may only create moves for their assigned donors.
+  // In the live schema assignment uses user_roles.id (organizationUser.id),
+  // not the auth user id.
   const isAdmin = role === "org_admin" || role === "super_admin";
   if (
     !isAdmin &&
-    (donor as { assigned_solicitor_id: string | null }).assigned_solicitor_id !==
-      currentUser.user.id
+    (donor as { primary_solicitor_id: string | null }).primary_solicitor_id !==
+      currentUser.organizationUser?.id
   ) {
     return {
       errors: {
@@ -106,7 +108,7 @@ export async function createMove(
   // Verify move idea exists and is accessible (global or belongs to org)
   const { data: moveIdea, error: ideaError } = await supabase
     .from("move_ideas")
-    .select("id, title")
+    .select("id, name")
     .eq("id", moveIdeaId)
     .single();
 
@@ -114,19 +116,18 @@ export async function createMove(
     return { errors: { moveIdeaId: "Move Idea not found." } };
   }
 
-  // Determine solicitor_id: for admins the current user acts as solicitor,
-  // unless we have a better model. Per spec: solicitor_id = current user.
-  const solicitorId = currentUser.user.id;
+  // assigned_to references user_roles.id, not the auth user id.
+  const assignedTo = currentUser.organizationUser?.id ?? null;
 
   // Insert the move
   const { error: insertError } = await supabase.from("moves").insert({
     organization_id: organizationId,
     donor_id: donorId,
-    solicitor_id: solicitorId,
+    assigned_to: assignedTo,
     move_idea_id: moveIdeaId,
-    title: title,
+    name: title,
     due_date: dueDate,
-    status: "pending",
+    is_completed: false,
   });
 
   if (insertError) {

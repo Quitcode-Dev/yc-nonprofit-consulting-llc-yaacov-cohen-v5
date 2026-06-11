@@ -5,6 +5,14 @@ import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { sendInvitationEmail } from "@/lib/email";
 import crypto from "crypto";
 
+// Invitations live in the `org_invites` table (email, role, token, expires_at,
+// accepted_at). Unlike the old design, no auth user or membership row is created
+// up front — the auth user + user_roles row are created when the invite is
+// accepted (see api/invitations/complete). An invite is "pending" while
+// accepted_at IS NULL and expires_at is in the future.
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days, matching live data
+const DEFAULT_INVITE_ROLE = "organization_solicitor";
+
 export async function POST(request: NextRequest) {
   // ── Auth: only org_admin or super_admin ──────────────────────────
   const currentUser = await getCurrentUser();
@@ -68,160 +76,57 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ── Check for duplicate in same org ──────────────────────────────
   const supabase = await createServerClient();
 
-  // Check by invited_email (pending invitations)
-  const { data: existingByInvitedEmail } = await supabase
-    .from("organization_users")
-    .select("id, status")
+  // ── Already an active member of this org? ────────────────────────
+  const { data: existingMember } = await supabase
+    .from("user_roles")
+    .select("id")
     .eq("organization_id", organizationId)
-    .eq("invited_email", email)
-    .in("status", ["active", "pending"])
+    .eq("email", email)
+    .eq("is_active", true)
     .limit(1);
 
-  if (existingByInvitedEmail && existingByInvitedEmail.length > 0) {
+  if (existingMember && existingMember.length > 0) {
     return NextResponse.json(
-      {
-        success: false,
-        error: "User already exists in this organization",
-      },
+      { success: false, error: "User already exists in this organization" },
       { status: 409 }
     );
   }
 
-  // Also check if there's an existing user whose profile email matches
-  // and who is already in this organization
-  const { data: existingProfiles } = await supabase
-    .from("profiles")
+  // ── Already a pending (unaccepted, unexpired) invite? ────────────
+  const nowIso = new Date().toISOString();
+  const { data: pendingInvite } = await supabase
+    .from("org_invites")
     .select("id")
+    .eq("organization_id", organizationId)
     .eq("email", email)
+    .is("accepted_at", null)
+    .gt("expires_at", nowIso)
     .limit(1);
 
-  if (existingProfiles && existingProfiles.length > 0) {
-    const profileUserId = existingProfiles[0].id;
-
-    const { data: existingOrgUser } = await supabase
-      .from("organization_users")
-      .select("id, status")
-      .eq("organization_id", organizationId)
-      .eq("user_id", profileUserId)
-      .in("status", ["active", "pending"])
-      .limit(1);
-
-    if (existingOrgUser && existingOrgUser.length > 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "User already exists in this organization",
-        },
-        { status: 409 }
-      );
-    }
-  }
-
-  // ── Create auth user via service role client ─────────────────────
-  // The organization_users table requires a non-null user_id FK to
-  // profiles(id) which references auth.users. We use the admin API to
-  // create the auth user (or retrieve the existing one).
-  let userId: string;
-
-  try {
-    const adminClient = createServiceRoleClient();
-
-    // Check if an auth user already exists for this email
-    const { data: existingUsers, error: listError } =
-      await adminClient.auth.admin.listUsers();
-
-    if (listError) {
-      console.error("Failed to list users:", listError);
-      return NextResponse.json(
-        { success: false, error: "Failed to process invitation" },
-        { status: 500 }
-      );
-    }
-
-    const existingAuthUser = existingUsers.users.find(
-      (u) => u.email?.toLowerCase() === email
-    );
-
-    if (existingAuthUser) {
-      userId = existingAuthUser.id;
-    } else {
-      // Create a new auth user with a random password (they'll set their
-      // own password during registration via the invitation token flow)
-      const tempPassword = crypto.randomUUID() + crypto.randomUUID();
-      const { data: newUser, error: createError } =
-        await adminClient.auth.admin.createUser({
-          email,
-          password: tempPassword,
-          email_confirm: false,
-          user_metadata: {
-            first_name: body.firstName || null,
-            last_name: body.lastName || null,
-            invited: true,
-          },
-        });
-
-      if (createError || !newUser.user) {
-        console.error("Failed to create auth user:", createError);
-        return NextResponse.json(
-          { success: false, error: "Failed to create user account" },
-          { status: 500 }
-        );
-      }
-
-      userId = newUser.user.id;
-
-      // Create a profile record for the new user
-      const { error: profileError } = await adminClient
-        .from("profiles")
-        .insert({
-          id: userId,
-          first_name: body.firstName || null,
-          last_name: body.lastName || null,
-          email,
-          role: "solicitor",
-          status: "pending",
-        });
-
-      if (profileError) {
-        console.error("Failed to create profile:", profileError);
-        // Clean up the auth user we just created
-        await adminClient.auth.admin.deleteUser(userId);
-        return NextResponse.json(
-          { success: false, error: "Failed to create user profile" },
-          { status: 500 }
-        );
-      }
-    }
-  } catch (error) {
-    console.error("Service role client error:", error);
+  if (pendingInvite && pendingInvite.length > 0) {
     return NextResponse.json(
-      { success: false, error: "Failed to process invitation" },
-      { status: 500 }
+      { success: false, error: "An invitation for this email is already pending" },
+      { status: 409 }
     );
   }
 
-  // ── Generate token & expiry ──────────────────────────────────────
-  const invitationToken = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+  // ── Create the invite ────────────────────────────────────────────
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
 
-  // ── Insert organization_users record ─────────────────────────────
-  // Use the service role client to bypass RLS for the insert
+  // Use the service role client to bypass RLS for the insert.
   const adminClient = createServiceRoleClient();
 
-  const { error: insertError } = await adminClient
-    .from("organization_users")
-    .insert({
-      organization_id: organizationId,
-      user_id: userId,
-      invited_email: email,
-      invitation_token: invitationToken,
-      invitation_expires_at: expiresAt,
-      role: "solicitor",
-      status: "pending",
-    });
+  const { error: insertError } = await adminClient.from("org_invites").insert({
+    organization_id: organizationId,
+    created_by: currentUser.user.id, // org_invites.created_by is the auth user id
+    email,
+    role: DEFAULT_INVITE_ROLE,
+    token,
+    expires_at: expiresAt,
+  });
 
   if (insertError) {
     console.error("Failed to insert invitation record:", insertError);
@@ -243,7 +148,7 @@ export async function POST(request: NextRequest) {
   // ── Send invitation email ────────────────────────────────────────
   const emailResult = await sendInvitationEmail({
     email,
-    token: invitationToken,
+    token,
     orgName,
     firstName: body.firstName,
     lastName: body.lastName,
@@ -258,7 +163,7 @@ export async function POST(request: NextRequest) {
         success: true,
         message:
           "Invitation created but email delivery failed. The invitation link can be shared manually.",
-        token: invitationToken,
+        token,
       },
       { status: 200 }
     );

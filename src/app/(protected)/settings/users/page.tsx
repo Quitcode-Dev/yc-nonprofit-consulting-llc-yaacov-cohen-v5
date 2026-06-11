@@ -3,21 +3,16 @@ import { createServerClient } from "@/lib/supabase/server";
 import InviteDialog from "./invite-dialog";
 import UsersTable, { type SolicitorRow } from "./users-table";
 
-interface OrganizationUserRecord {
+// Real schema: members live in `user_roles` (identity + org membership merged).
+// Name/email/phone are ON this row; there is no separate profiles table.
+interface UserRoleRecord {
   id: string;
   user_id: string;
   role: string;
-  status: string;
-  invited_email: string | null;
-  created_at: string;
-  joined_at: string | null;
-}
-
-interface ProfileRecord {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
+  is_active: boolean;
   email: string | null;
+  full_name: string | null;
+  created_at: string;
 }
 
 export default async function UserManagementPage() {
@@ -30,56 +25,36 @@ export default async function UserManagementPage() {
   if (organizationId) {
     const supabase = await createServerClient();
 
-    // Fetch all organization_users for this org (excluding org_admin and super_admin rows)
-    const { data: orgUsers, error: orgUsersError } = await supabase
-      .from("organization_users")
-      .select("id, user_id, role, status, invited_email, created_at, joined_at")
+    // Fetch all user_roles (members) for this org.
+    const { data: members, error: membersError } = await supabase
+      .from("user_roles")
+      .select("id, user_id, role, is_active, email, full_name, created_at")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
 
-    if (orgUsersError) {
-      console.error("Failed to fetch organization users:", orgUsersError);
+    if (membersError) {
+      console.error("Failed to fetch organization members:", membersError);
     }
 
-    if (orgUsers && orgUsers.length > 0) {
-      // Collect unique user_ids to join with profiles
-      const userIds = [
-        ...new Set(
-          (orgUsers as OrganizationUserRecord[])
-            .map((u) => u.user_id)
-            .filter(Boolean)
-        ),
-      ];
+    if (members && members.length > 0) {
+      solicitors = (members as UserRoleRecord[]).map((m) => {
+        // full_name is a single field on user_roles; split into first/last to
+        // satisfy the SolicitorRow contract consumed by UsersTable.
+        const nameParts = (m.full_name ?? "").trim().split(/\s+/).filter(Boolean);
+        const firstName = nameParts.length > 0 ? nameParts[0] : null;
+        const lastName =
+          nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
 
-      let profilesMap: Map<string, ProfileRecord> = new Map();
-
-      if (userIds.length > 0) {
-        const { data: profiles, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id, first_name, last_name, email")
-          .in("id", userIds);
-
-        if (profilesError) {
-          console.error("Failed to fetch profiles:", profilesError);
-        }
-
-        if (profiles) {
-          for (const p of profiles as ProfileRecord[]) {
-            profilesMap.set(p.id, p);
-          }
-        }
-      }
-
-      solicitors = (orgUsers as OrganizationUserRecord[]).map((ou) => {
-        const profile = profilesMap.get(ou.user_id);
         return {
-          userId: ou.user_id,
-          firstName: profile?.first_name ?? null,
-          lastName: profile?.last_name ?? null,
-          // Prefer profile email, fall back to invited_email for pending users
-          email: profile?.email ?? ou.invited_email ?? null,
-          status: ou.status,
-          dateAdded: ou.created_at,
+          // The membership row id (user_roles.id) is the identifier used by
+          // the deactivate/reactivate actions (rule 6).
+          userId: m.id,
+          firstName,
+          lastName,
+          email: m.email ?? null,
+          // is_active maps to the active/inactive status string.
+          status: m.is_active ? "active" : "inactive",
+          dateAdded: m.created_at,
         };
       });
     }
