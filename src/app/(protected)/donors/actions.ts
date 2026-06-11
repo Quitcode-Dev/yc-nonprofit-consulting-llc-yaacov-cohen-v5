@@ -23,7 +23,7 @@ export async function createDonor(
   _prevState: CreateDonorState,
   formData: FormData
 ): Promise<CreateDonorState> {
-  await requireRole(["org_admin", "super_admin"]);
+  await requireRole(["organization_admin", "org_admin", "super_admin"]);
 
   const organizationId = await getUserOrganizationId();
 
@@ -98,19 +98,23 @@ export async function createDonor(
       organization_id: organizationId,
       first_name: firstName,
       last_name: lastName,
+      // donors.name is non-derived in the live schema; populate it from the
+      // first/last name so list/detail name displays remain consistent.
+      name: [firstName, lastName].filter(Boolean).join(" "),
       email: email || null,
-      phone: phone || null,
-      capacity: capacity,
-      assigned_solicitor_id: assignedSolicitorId || null,
+      primary_phone: phone || null,
+      wealth_capacity: capacity,
+      // assignedSolicitorId is a user_roles.id (donors.primary_solicitor_id ref).
+      primary_solicitor_id: assignedSolicitorId || null,
       is_parent: isParent,
       is_grandparent: isGrandparent,
       is_alumni: isAlumni,
       is_board_member: isBoardMember,
       is_community_builder: isCommunityBuilder,
       is_program_attendee: isProgramAttendee,
-      is_volunteer: isVolunteer,
-      is_donor_advised_fund: isDonorAdvisedFund,
-      is_foundation_trustee: isFoundationTrustee,
+      is_organization_volunteer: isVolunteer,
+      has_donor_advised_fund: isDonorAdvisedFund,
+      has_foundation_or_trustee: isFoundationTrustee,
     })
     .select("id")
     .single();
@@ -167,7 +171,7 @@ export async function updateDonorCharacteristics(
   // Fetch donor to verify ownership and org
   const { data: donor, error: donorError } = await supabase
     .from("donors")
-    .select("id, organization_id, assigned_solicitor_id")
+    .select("id, organization_id, primary_solicitor_id")
     .eq("id", donorId)
     .eq("organization_id", organizationId)
     .single();
@@ -176,20 +180,39 @@ export async function updateDonorCharacteristics(
     return { error: "Donor not found." };
   }
 
-  // Check authorization: admin can edit any donor; solicitor can only edit assigned donors
+  // Check authorization: admin can edit any donor; solicitor can only edit
+  // assigned donors. A solicitor is identified by user_roles.id, which is
+  // currentUser.organizationUser.id (NOT the auth user id), and matches
+  // donors.primary_solicitor_id.
   const role = getUserRole(currentUser);
-  const isAdmin = role === "org_admin" || role === "super_admin";
+  const isAdmin =
+    role === "organization_admin" ||
+    role === "org_admin" ||
+    role === "super_admin";
   const isSolicitorAssigned =
     role === "solicitor" &&
-    donor.assigned_solicitor_id === currentUser.user.id;
+    donor.primary_solicitor_id === currentUser.organizationUser?.id;
 
   if (!isAdmin && !isSolicitorAssigned) {
     return { error: "You are not authorized to edit this donor." };
   }
 
+  // Map the legacy DonorCharacteristics keys to live donor column names.
+  const characteristicsUpdate = {
+    is_parent: characteristics.is_parent,
+    is_grandparent: characteristics.is_grandparent,
+    is_alumni: characteristics.is_alumni,
+    is_board_member: characteristics.is_board_member,
+    is_community_builder: characteristics.is_community_builder,
+    is_program_attendee: characteristics.is_program_attendee,
+    is_organization_volunteer: characteristics.is_volunteer,
+    has_donor_advised_fund: characteristics.is_donor_advised_fund,
+    has_foundation_or_trustee: characteristics.is_foundation_trustee,
+  };
+
   const { error: updateError } = await supabase
     .from("donors")
-    .update(characteristics)
+    .update(characteristicsUpdate)
     .eq("id", donorId);
 
   if (updateError) {

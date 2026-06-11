@@ -9,10 +9,24 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Link2 } from "lucide-react";
 import { getDisplayStatus, getStatusBadgeProps } from "@/lib/move-utils";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
+
+// Live `moves` schema fields used here. The legacy UI fields are derived:
+//   title  <- name
+//   status <- is_completed (boolean) mapped to "pending" | "completed"
+//   solicitor_id <- assigned_to (a user_roles.id)
+// SCHEMA-GAP: moves has no 'follow_up_move_id' column in live schema.
+// SCHEMA-GAP: moves has no 'created_at' column in live schema; order by due_date.
+interface MoveDbRow {
+  id: string;
+  name: string;
+  due_date: string;
+  is_completed: boolean;
+  completion_notes: string | null;
+  assigned_to: string | null;
+}
 
 interface MoveRow {
   id: string;
@@ -20,14 +34,11 @@ interface MoveRow {
   due_date: string;
   status: "pending" | "completed";
   completion_notes: string | null;
-  follow_up_move_id: string | null;
-  created_at: string;
-  solicitor_id: string;
+  solicitor_id: string | null;
 }
 
 interface EnrichedMove extends MoveRow {
   solicitorName: string | null;
-  followUpMoveTitle: string | null;
   displayStatus: "pending" | "completed" | "overdue";
 }
 
@@ -49,62 +60,52 @@ function formatDate(dateStr: string | null): string {
 export default async function MoveHistory({ donorId }: { donorId: string }) {
   const supabase = await createServerClient();
 
-  // Fetch all moves for this donor, ordered by created_at DESC
+  // Fetch all moves for this donor.
+  // SCHEMA-GAP: moves has no 'created_at' column in live schema; order by due_date.
   const { data: movesRaw } = await supabase
     .from("moves")
     .select(
-      "id, title, due_date, status, completion_notes, follow_up_move_id, created_at, solicitor_id"
+      "id, name, due_date, is_completed, completion_notes, assigned_to"
     )
     .eq("donor_id", donorId)
-    .order("created_at", { ascending: false });
+    .order("due_date", { ascending: false });
 
-  const rawMoves = (movesRaw ?? []) as MoveRow[];
+  // Map live `moves` rows to the legacy MoveRow shape the UI expects.
+  const rawMoves = ((movesRaw ?? []) as MoveDbRow[]).map((m) => ({
+    id: m.id,
+    title: m.name,
+    due_date: m.due_date,
+    status: (m.is_completed ? "completed" : "pending") as
+      | "pending"
+      | "completed",
+    completion_notes: m.completion_notes,
+    solicitor_id: m.assigned_to,
+  }));
 
-  // Collect unique solicitor IDs for batch profile fetch
-  const solicitorIds = [...new Set(rawMoves.map((m) => m.solicitor_id))];
+  // Collect unique solicitor IDs (assigned_to references user_roles.id).
+  const solicitorIds = [
+    ...new Set(
+      rawMoves
+        .map((m) => m.solicitor_id)
+        .filter((id): id is string => id !== null)
+    ),
+  ];
   const solicitorMap = new Map<string, string>();
 
   if (solicitorIds.length > 0) {
-    const { data: profilesRaw } = await supabase
-      .from("profiles")
-      .select("id, first_name, last_name, email")
+    const { data: roleRows } = await supabase
+      .from("user_roles")
+      .select("id, full_name, email")
       .in("id", solicitorIds);
 
-    if (profilesRaw) {
-      for (const p of profilesRaw as Array<{
+    if (roleRows) {
+      for (const r of roleRows as Array<{
         id: string;
-        first_name: string | null;
-        last_name: string | null;
+        full_name: string | null;
         email: string | null;
       }>) {
-        const name =
-          [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-          p.email ||
-          p.id;
-        solicitorMap.set(p.id, name);
-      }
-    }
-  }
-
-  // Collect follow-up move IDs for batch title fetch
-  const followUpIds = rawMoves
-    .map((m) => m.follow_up_move_id)
-    .filter((id): id is string => id !== null);
-
-  const followUpTitleMap = new Map<string, string>();
-
-  if (followUpIds.length > 0) {
-    const { data: followUpMovesRaw } = await supabase
-      .from("moves")
-      .select("id, title")
-      .in("id", followUpIds);
-
-    if (followUpMovesRaw) {
-      for (const fm of followUpMovesRaw as Array<{
-        id: string;
-        title: string;
-      }>) {
-        followUpTitleMap.set(fm.id, fm.title);
+        const name = r.full_name || r.email || r.id;
+        solicitorMap.set(r.id, name);
       }
     }
   }
@@ -112,9 +113,8 @@ export default async function MoveHistory({ donorId }: { donorId: string }) {
   // Compute display status (pending / completed / overdue) using shared utility
   const moves: EnrichedMove[] = rawMoves.map((m) => ({
     ...m,
-    solicitorName: solicitorMap.get(m.solicitor_id) ?? null,
-    followUpMoveTitle: m.follow_up_move_id
-      ? (followUpTitleMap.get(m.follow_up_move_id) ?? null)
+    solicitorName: m.solicitor_id
+      ? (solicitorMap.get(m.solicitor_id) ?? null)
       : null,
     displayStatus: getDisplayStatus(m),
   }));
@@ -163,19 +163,8 @@ export default async function MoveHistory({ donorId }: { donorId: string }) {
                     Due: {formatDate(move.due_date)}
                   </p>
 
-                  {/* Follow-up linkage */}
-                  {move.follow_up_move_id && move.followUpMoveTitle && (
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Link2 className="h-3 w-3 flex-shrink-0" />
-                      <span>Follow-up to:</span>
-                      <Link
-                        href={`/moves/${move.follow_up_move_id}`}
-                        className="font-medium text-primary hover:underline truncate"
-                      >
-                        {move.followUpMoveTitle}
-                      </Link>
-                    </div>
-                  )}
+                  {/* SCHEMA-GAP: moves has no 'follow_up_move_id' column in live
+                      schema; follow-up linkage removed. */}
                 </div>
 
                 {/* Right side */}

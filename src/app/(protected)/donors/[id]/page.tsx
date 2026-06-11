@@ -23,10 +23,12 @@ interface DonorRow {
   first_name: string;
   last_name: string;
   email: string | null;
-  phone: string | null;
-  capacity: number | null;
-  assigned_solicitor_id: string | null;
-  score: number | null;
+  primary_phone: string | null;
+  wealth_capacity: number | null;
+  primary_solicitor_id: string | null;
+  primary_solicitor_name: string | null;
+  total_score: number | null;
+  // SCHEMA-GAP: donors has no 'tier' column in live schema
   tier: string | null;
   is_parent: boolean;
   is_grandparent: boolean;
@@ -34,9 +36,9 @@ interface DonorRow {
   is_board_member: boolean;
   is_community_builder: boolean;
   is_program_attendee: boolean;
-  is_volunteer: boolean;
-  is_donor_advised_fund: boolean;
-  is_foundation_trustee: boolean;
+  is_organization_volunteer: boolean;
+  has_donor_advised_fund: boolean;
+  has_foundation_or_trustee: boolean;
 }
 
 interface ScoringConfigRow {
@@ -137,19 +139,19 @@ const SCORE_FIELDS: Array<{
     label: "Program Attendee",
   },
   {
-    donorField: "is_volunteer",
+    donorField: "is_organization_volunteer",
     enabledKey: "volunteer_enabled",
     pointsKey: "volunteer_points",
     label: "Volunteer",
   },
   {
-    donorField: "is_donor_advised_fund",
+    donorField: "has_donor_advised_fund",
     enabledKey: "donor_advised_fund_enabled",
     pointsKey: "donor_advised_fund_points",
     label: "Donor Advised Fund",
   },
   {
-    donorField: "is_foundation_trustee",
+    donorField: "has_foundation_or_trustee",
     enabledKey: "foundation_trustee_enabled",
     pointsKey: "foundation_trustee_points",
     label: "Foundation/Trustee",
@@ -181,10 +183,11 @@ export default async function DonorProfilePage({
   const supabase = await createServerClient();
 
   // Fetch donor, scoped to the org
+  // SCHEMA-GAP: donors has no 'tier' column in live schema; not selected.
   const { data: donorRaw, error: donorError } = await supabase
     .from("donors")
     .select(
-      "id, organization_id, first_name, last_name, email, phone, capacity, assigned_solicitor_id, score, tier, is_parent, is_grandparent, is_alumni, is_board_member, is_community_builder, is_program_attendee, is_volunteer, is_donor_advised_fund, is_foundation_trustee"
+      "id, organization_id, first_name, last_name, email, primary_phone, wealth_capacity, primary_solicitor_id, primary_solicitor_name, total_score, is_parent, is_grandparent, is_alumni, is_board_member, is_community_builder, is_program_attendee, is_organization_volunteer, has_donor_advised_fund, has_foundation_or_trustee"
     )
     .eq("id", id)
     .eq("organization_id", organizationId)
@@ -194,32 +197,38 @@ export default async function DonorProfilePage({
     redirect("/donors");
   }
 
-  const donor = donorRaw as DonorRow;
+  // SCHEMA-GAP: donors has no 'tier' column in live schema; default to null so
+  // the existing tier UI renders empty without inventing a column.
+  const donor = { tier: null, ...donorRaw } as DonorRow;
 
-  // For solicitors, verify they are assigned to this donor
-  if (role === "solicitor" && donor.assigned_solicitor_id !== currentUser.user.id) {
+  // For solicitors, verify they are assigned to this donor.
+  // primary_solicitor_id references user_roles.id, which is the current user's
+  // organizationUser.id (NOT the auth user id).
+  if (
+    role === "solicitor" &&
+    donor.primary_solicitor_id !== currentUser.organizationUser?.id
+  ) {
     redirect("/donors");
   }
 
-  // Fetch assigned solicitor's name (if any)
-  let solicitorName: string | null = null;
-  if (donor.assigned_solicitor_id) {
-    const { data: solicitorProfile } = await supabase
-      .from("profiles")
-      .select("first_name, last_name, email")
-      .eq("id", donor.assigned_solicitor_id)
+  // Resolve assigned solicitor's name (if any). Prefer the denormalized
+  // donors.primary_solicitor_name; fall back to a user_roles lookup
+  // (primary_solicitor_id references user_roles.id).
+  let solicitorName: string | null = donor.primary_solicitor_name ?? null;
+  if (!solicitorName && donor.primary_solicitor_id) {
+    const { data: solicitorRole } = await supabase
+      .from("user_roles")
+      .select("id, full_name, email")
+      .eq("id", donor.primary_solicitor_id)
       .single();
 
-    if (solicitorProfile) {
-      const p = solicitorProfile as {
-        first_name: string | null;
-        last_name: string | null;
+    if (solicitorRole) {
+      const r = solicitorRole as {
+        id: string;
+        full_name: string | null;
         email: string | null;
       };
-      solicitorName =
-        [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-        p.email ||
-        donor.assigned_solicitor_id;
+      solicitorName = r.full_name || r.email || donor.primary_solicitor_id;
     }
   }
 
@@ -253,7 +262,7 @@ export default async function DonorProfilePage({
     .order("min_score", { ascending: true });
 
   const scoreBands = (scoreBandsRaw ?? []) as ScoreBandConfigRow[];
-  const donorScore = donor.score ?? 0;
+  const donorScore = donor.total_score ?? 0;
   const matchedBand = scoreBands.find(
     (b) => donorScore >= b.min_score && donorScore <= b.max_score
   );
@@ -269,11 +278,17 @@ export default async function DonorProfilePage({
   const donations = (donationsRaw ?? []) as DonationRow[];
 
   // Determine editability
-  const isAdmin = role === "org_admin" || role === "super_admin";
+  const isAdmin =
+    role === "organization_admin" ||
+    role === "org_admin" ||
+    role === "super_admin";
   const isSolicitorAssigned =
-    role === "solicitor" && donor.assigned_solicitor_id === currentUser.user.id;
+    role === "solicitor" &&
+    donor.primary_solicitor_id === currentUser.organizationUser?.id;
   const canEditCharacteristics = isAdmin || isSolicitorAssigned;
 
+  // Map live donor columns back to the DonorCharacteristics shape (which uses
+  // the legacy is_volunteer / is_donor_advised_fund / is_foundation_trustee keys).
   const initialCharacteristics: DonorCharacteristics = {
     is_parent: donor.is_parent,
     is_grandparent: donor.is_grandparent,
@@ -281,9 +296,9 @@ export default async function DonorProfilePage({
     is_board_member: donor.is_board_member,
     is_community_builder: donor.is_community_builder,
     is_program_attendee: donor.is_program_attendee,
-    is_volunteer: donor.is_volunteer,
-    is_donor_advised_fund: donor.is_donor_advised_fund,
-    is_foundation_trustee: donor.is_foundation_trustee,
+    is_volunteer: donor.is_organization_volunteer,
+    is_donor_advised_fund: donor.has_donor_advised_fund,
+    is_foundation_trustee: donor.has_foundation_or_trustee,
   };
 
   const donorFullName = [donor.first_name, donor.last_name]
@@ -338,15 +353,15 @@ export default async function DonorProfilePage({
                   <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                     Phone
                   </p>
-                  <p className="text-sm mt-1">{donor.phone ?? "—"}</p>
+                  <p className="text-sm mt-1">{donor.primary_phone ?? "—"}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                     Giving Capacity
                   </p>
                   <p className="text-sm mt-1">
-                    {donor.capacity !== null
-                      ? formatCurrency(donor.capacity)
+                    {donor.wealth_capacity !== null
+                      ? formatCurrency(donor.wealth_capacity)
                       : "—"}
                   </p>
                 </div>
@@ -377,7 +392,7 @@ export default async function DonorProfilePage({
                     Score
                   </p>
                   <p className="text-sm mt-1 font-semibold tabular-nums">
-                    {donor.score ?? "—"}
+                    {donor.total_score ?? "—"}
                   </p>
                 </div>
               </div>
@@ -416,7 +431,7 @@ export default async function DonorProfilePage({
               {/* Total score + tier */}
               <div className="text-center space-y-2">
                 <p className="text-5xl font-bold tabular-nums">
-                  {donor.score ?? 0}
+                  {donor.total_score ?? 0}
                 </p>
                 {donor.tier ? (
                   <Badge variant="secondary" className="text-sm px-3 py-1">
@@ -464,7 +479,7 @@ export default async function DonorProfilePage({
                     <Separator className="my-2" />
                     <div className="flex justify-between text-sm font-semibold">
                       <span>Total</span>
-                      <span className="tabular-nums">{donor.score ?? 0}</span>
+                      <span className="tabular-nums">{donor.total_score ?? 0}</span>
                     </div>
                   </div>
                 )}

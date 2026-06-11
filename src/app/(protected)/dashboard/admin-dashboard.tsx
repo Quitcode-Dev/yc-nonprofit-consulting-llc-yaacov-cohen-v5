@@ -55,14 +55,16 @@ export default async function AdminDashboard({
   // Fetch all donor scores for the org
   const { data: donorScoresRaw } = await supabase
     .from("donors")
-    .select("score")
+    .select("total_score")
     .eq("organization_id", organizationId);
 
   const donorScores = (
-    (donorScoresRaw ?? []) as Array<{ score: number | null }>
-  ).map((d) => d.score ?? 0);
+    (donorScoresRaw ?? []) as Array<{ total_score: number | null }>
+  ).map((d) => d.total_score ?? 0);
 
   // Fetch score band configs for the org
+  // SCHEMA-GAP: `score_band_configs` is not in the documented live schema; left
+  // as-is since no replacement source for moves-needed-by-score-band was given.
   const { data: scoreBandsRaw } = await supabase
     .from("score_band_configs")
     .select("min_score, max_score, moves_needed")
@@ -98,77 +100,70 @@ export default async function AdminDashboard({
     .from("moves")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
-    .eq("status", "completed");
+    .eq("is_completed", true);
 
   // ── Metric 5: Pending Moves ─────────────────────────────────────────────
   const { count: pendingMoves } = await supabase
     .from("moves")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
-    .eq("status", "pending");
+    .eq("is_completed", false);
 
   // ── Leaderboard: Active solicitors with avg donor score ─────────────────
-  // Fetch all active solicitors in the org
+  // In the live schema, solicitors are rows in `user_roles` (identified by
+  // user_roles.id). Donor↔solicitor links use donors.primary_solicitor_id,
+  // which references user_roles.id. Display name = full_name.
+  // SCHEMA-GAP: user_roles.role enum is only 'super_admin' | 'organization_admin';
+  // there is no 'solicitor' role, so we list ALL active org user_roles as
+  // candidate solicitors rather than filtering on role === 'solicitor'.
   const { data: orgUsersRaw } = await supabase
-    .from("organization_users")
-    .select("user_id")
+    .from("user_roles")
+    .select("id, full_name, email")
     .eq("organization_id", organizationId)
-    .eq("status", "active")
-    .eq("role", "solicitor");
+    .eq("is_active", true);
 
-  const solicitorIds = (
-    (orgUsersRaw ?? []) as Array<{ user_id: string }>
-  ).map((ou) => ou.user_id);
+  const orgUsers = (orgUsersRaw ?? []) as Array<{
+    id: string;
+    full_name: string | null;
+    email: string | null;
+  }>;
+
+  // solicitor ids here are user_roles.id values
+  const solicitorIds = orgUsers.map((u) => u.id);
 
   const solicitorEntries: SolicitorEntry[] = [];
 
   if (solicitorIds.length > 0) {
-    // Fetch solicitor profiles
-    const { data: profilesRaw } = await supabase
-      .from("profiles")
-      .select("id, first_name, last_name, email")
-      .in("id", solicitorIds);
-
-    const profiles = (profilesRaw ?? []) as Array<{
-      id: string;
-      first_name: string | null;
-      last_name: string | null;
-      email: string | null;
-    }>;
-
     // Fetch all donors assigned to these solicitors in the org
     const { data: assignedDonorsRaw } = await supabase
       .from("donors")
-      .select("assigned_solicitor_id, score")
+      .select("primary_solicitor_id, total_score")
       .eq("organization_id", organizationId)
-      .in("assigned_solicitor_id", solicitorIds);
+      .in("primary_solicitor_id", solicitorIds);
 
     const assignedDonors = (assignedDonorsRaw ?? []) as Array<{
-      assigned_solicitor_id: string | null;
-      score: number | null;
+      primary_solicitor_id: string | null;
+      total_score: number | null;
     }>;
 
-    // Group donor scores by solicitor
+    // Group donor scores by solicitor (keyed by user_roles.id)
     const scoresBySolicitor = new Map<string, number[]>();
     for (const sid of solicitorIds) {
       scoresBySolicitor.set(sid, []);
     }
     for (const d of assignedDonors) {
-      if (d.assigned_solicitor_id) {
-        const existing = scoresBySolicitor.get(d.assigned_solicitor_id);
+      if (d.primary_solicitor_id) {
+        const existing = scoresBySolicitor.get(d.primary_solicitor_id);
         if (existing !== undefined) {
-          existing.push(d.score ?? 0);
+          existing.push(d.total_score ?? 0);
         }
       }
     }
 
     // Build solicitor entries with avg score
-    for (const profile of profiles) {
-      const scores = scoresBySolicitor.get(profile.id) ?? [];
-      const name =
-        [profile.first_name, profile.last_name].filter(Boolean).join(" ") ||
-        profile.email ||
-        profile.id;
+    for (const orgUser of orgUsers) {
+      const scores = scoresBySolicitor.get(orgUser.id) ?? [];
+      const name = orgUser.full_name || orgUser.email || orgUser.id;
 
       let avgScore: number | null = null;
       if (scores.length > 0) {
@@ -177,7 +172,7 @@ export default async function AdminDashboard({
       }
 
       solicitorEntries.push({
-        id: profile.id,
+        id: orgUser.id,
         name,
         avgScore,
         donorCount: scores.length,

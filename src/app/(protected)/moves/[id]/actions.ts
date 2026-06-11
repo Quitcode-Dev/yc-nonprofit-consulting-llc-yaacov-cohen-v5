@@ -71,7 +71,7 @@ export async function completeMove(
   // Fetch the move to complete — must belong to the same org
   const { data: moveRaw, error: moveError } = await supabase
     .from("moves")
-    .select("id, organization_id, donor_id, solicitor_id, status, title")
+    .select("id, organization_id, donor_id, assigned_to, is_completed, name")
     .eq("id", moveId)
     .eq("organization_id", organizationId)
     .single();
@@ -84,23 +84,23 @@ export async function completeMove(
     id: string;
     organization_id: string;
     donor_id: string;
-    solicitor_id: string;
-    status: string;
-    title: string;
+    assigned_to: string | null;
+    is_completed: boolean;
+    name: string;
   };
 
-  if (move.status !== "pending") {
+  if (move.is_completed) {
     return { errors: { general: "Only pending moves can be completed." } };
   }
 
-  let followUpMoveId: string | null = null;
-
-  // Create follow-up move first (so we can link it)
+  // Create follow-up move (a new pending move). The original move cannot be
+  // linked back to it because the live schema has no follow_up_move_id column.
+  // SCHEMA-GAP: moves has no follow_up_move_id in live schema
   if (followUp) {
-    // Fetch move idea title for the follow-up move title
+    // Fetch move idea name for the follow-up move name
     const { data: ideaRaw, error: ideaError } = await supabase
       .from("move_ideas")
-      .select("id, title")
+      .select("id, name")
       .eq("id", followUp.moveIdeaId)
       .single();
 
@@ -108,18 +108,18 @@ export async function completeMove(
       return { errors: { followUpMoveIdeaId: "Move Idea not found." } };
     }
 
-    const idea = ideaRaw as { id: string; title: string };
+    const idea = ideaRaw as { id: string; name: string };
 
     const { data: newMove, error: createError } = await supabase
       .from("moves")
       .insert({
         organization_id: move.organization_id,
         donor_id: move.donor_id,
-        solicitor_id: move.solicitor_id,
+        assigned_to: move.assigned_to,
         move_idea_id: followUp.moveIdeaId,
-        title: idea.title,
+        name: idea.name,
         due_date: followUp.dueDate,
-        status: "pending",
+        is_completed: false,
       })
       .select("id")
       .single();
@@ -127,20 +127,16 @@ export async function completeMove(
     if (createError || !newMove) {
       return { errors: { general: "Failed to create follow-up move." } };
     }
-
-    followUpMoveId = (newMove as { id: string }).id;
   }
 
-  // Update the original move to completed
+  // Update the original move to completed.
+  // SCHEMA-GAP: moves has no follow_up_move_id in live schema — cannot link
+  // the original move to the follow-up move.
   const updatePayload: Record<string, unknown> = {
-    status: "completed",
+    is_completed: true,
     completion_notes: trimmedNotes,
     completed_at: new Date().toISOString(),
   };
-
-  if (followUpMoveId) {
-    updatePayload.follow_up_move_id = followUpMoveId;
-  }
 
   const { error: updateError } = await supabase
     .from("moves")

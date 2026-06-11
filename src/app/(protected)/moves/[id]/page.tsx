@@ -19,14 +19,13 @@ interface MoveRow {
   id: string;
   organization_id: string;
   donor_id: string;
-  solicitor_id: string;
+  assigned_to: string | null;
   move_idea_id: string | null;
-  title: string;
+  name: string;
   due_date: string;
-  status: "pending" | "completed";
+  is_completed: boolean;
   completion_notes: string | null;
   completed_at: string | null;
-  follow_up_move_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -81,7 +80,7 @@ export default async function MoveDetailPage({
   const { data: moveRaw, error: moveError } = await supabase
     .from("moves")
     .select(
-      "id, organization_id, donor_id, solicitor_id, move_idea_id, title, due_date, status, completion_notes, completed_at, follow_up_move_id, created_at, updated_at"
+      "id, organization_id, donor_id, assigned_to, move_idea_id, name, due_date, is_completed, completion_notes, completed_at, created_at, updated_at"
     )
     .eq("id", id)
     .eq("organization_id", organizationId)
@@ -93,8 +92,9 @@ export default async function MoveDetailPage({
 
   const move = moveRaw as MoveRow;
 
-  // Solicitors can only see their own moves
-  if (role === "solicitor" && move.solicitor_id !== currentUser.user.id) {
+  // Solicitors can only see their own moves.
+  // moves.assigned_to references user_roles.id (organizationUser.id).
+  if (role === "solicitor" && move.assigned_to !== currentUser.organizationUser?.id) {
     redirect("/moves");
   }
 
@@ -116,40 +116,32 @@ export default async function MoveDetailPage({
     ? [donor.first_name, donor.last_name].filter(Boolean).join(" ")
     : "Unknown Donor";
 
-  // Fetch solicitor profile
-  const { data: solicitorRaw } = await supabase
-    .from("profiles")
-    .select("id, first_name, last_name, email")
-    .eq("id", move.solicitor_id)
-    .single();
-
-  const solicitor = solicitorRaw as {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    email: string | null;
-  } | null;
-
-  const solicitorName = solicitor
-    ? [solicitor.first_name, solicitor.last_name].filter(Boolean).join(" ") ||
-      solicitor.email ||
-      move.solicitor_id
-    : move.solicitor_id;
-
-  // Fetch follow-up move title if linked
-  let followUpMoveTitle: string | null = null;
-  if (move.follow_up_move_id) {
-    const { data: followUpRaw } = await supabase
-      .from("moves")
-      .select("id, title")
-      .eq("id", move.follow_up_move_id)
+  // Fetch solicitor display name from user_roles.
+  // moves.assigned_to references user_roles.id, not an auth user id.
+  let solicitorName: string = "Unassigned";
+  if (move.assigned_to) {
+    const { data: solicitorRaw } = await supabase
+      .from("user_roles")
+      .select("id, full_name, email")
+      .eq("id", move.assigned_to)
       .single();
-    if (followUpRaw) {
-      followUpMoveTitle = (followUpRaw as { id: string; title: string }).title;
-    }
+
+    const solicitor = solicitorRaw as {
+      id: string;
+      full_name: string | null;
+      email: string | null;
+    } | null;
+
+    solicitorName = solicitor
+      ? solicitor.full_name || solicitor.email || move.assigned_to
+      : move.assigned_to;
   }
 
-  const isPending = move.status === "pending";
+  // SCHEMA-GAP: moves has no follow_up_move_id in live schema — the follow-up
+  // move link feature is disabled.
+  const followUpMoveTitle: string | null = null;
+
+  const isPending = !move.is_completed;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -166,7 +158,7 @@ export default async function MoveDetailPage({
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-bold">{move.title}</h1>
+          <h1 className="text-2xl font-bold">{move.name}</h1>
           <p className="text-sm text-muted-foreground">
             Created {formatDateTime(move.created_at)}
           </p>
@@ -208,7 +200,9 @@ export default async function MoveDetailPage({
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Status
               </p>
-              <p className="text-sm mt-1 capitalize">{move.status}</p>
+              <p className="text-sm mt-1 capitalize">
+                {move.is_completed ? "completed" : "pending"}
+              </p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
@@ -244,19 +238,18 @@ export default async function MoveDetailPage({
           )}
 
           {/* Follow-up Move */}
-          {move.follow_up_move_id && followUpMoveTitle && (
+          {/* SCHEMA-GAP: moves has no follow_up_move_id in live schema —
+              follow-up move display is disabled. */}
+          {followUpMoveTitle && (
             <>
               <Separator />
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-2">
                   Follow-Up Move
                 </p>
-                <Link
-                  href={`/moves/${move.follow_up_move_id}`}
-                  className="text-sm font-medium text-primary hover:underline"
-                >
+                <span className="text-sm font-medium text-primary">
                   {followUpMoveTitle}
-                </Link>
+                </span>
               </div>
             </>
           )}

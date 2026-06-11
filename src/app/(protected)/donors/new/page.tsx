@@ -3,7 +3,7 @@ import { createServerClient } from "@/lib/supabase/server";
 import DonorForm, { type Solicitor } from "./donor-form";
 
 export default async function CreateDonorPage() {
-  await requireRole(["org_admin", "super_admin"]);
+  await requireRole(["organization_admin", "org_admin", "super_admin"]);
 
   const organizationId = await getUserOrganizationId();
 
@@ -12,37 +12,31 @@ export default async function CreateDonorPage() {
   if (organizationId) {
     const supabase = await createServerClient();
 
-    // Fetch active solicitors for the org
-    const { data: orgUsers } = await supabase
-      .from("organization_users")
-      .select("user_id, status")
+    // Fetch active members of the org from user_roles. Identity (full_name,
+    // email) lives on user_roles, and the id used for donor assignment
+    // (donors.primary_solicitor_id) is user_roles.id.
+    const { data: roleRows } = await supabase
+      .from("user_roles")
+      .select("id, full_name, email")
       .eq("organization_id", organizationId)
-      .eq("status", "active")
-      .eq("role", "solicitor");
+      .eq("is_active", true);
 
-    if (orgUsers && orgUsers.length > 0) {
-      const userIds = orgUsers.map((ou: { user_id: string }) => ou.user_id);
-
-      const { data: profiles } = await supabase
-        .from("profiles")
-        .select("id, first_name, last_name, email")
-        .in("id", userIds);
-
-      if (profiles) {
-        solicitors = profiles.map(
-          (p: {
-            id: string;
-            first_name: string | null;
-            last_name: string | null;
-            email: string | null;
-          }) => ({
-            userId: p.id,
-            firstName: p.first_name,
-            lastName: p.last_name,
-            email: p.email,
-          })
-        );
-      }
+    if (roleRows && roleRows.length > 0) {
+      solicitors = roleRows.map(
+        (r: {
+          id: string;
+          full_name: string | null;
+          email: string | null;
+        }) => ({
+          // userId here carries the user_roles.id used for assignment.
+          userId: r.id,
+          // SCHEMA-GAP: user_roles has no first_name/last_name; only full_name.
+          // Put the full name in firstName so the form renders it as-is.
+          firstName: r.full_name,
+          lastName: null,
+          email: r.email,
+        })
+      );
     }
   }
 

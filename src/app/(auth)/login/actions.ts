@@ -20,64 +20,40 @@ export async function getUserRole(): Promise<{
 
   const userId = user.id;
 
-  // Check if user is a super admin via profiles table
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("is_super_admin")
-    .eq("id", userId)
-    .single();
+  // Roles live in the `user_roles` table. A user may have one row per
+  // organization; a super_admin row has organization_id = null. The
+  // `is_active` flag gates whether a membership is currently usable.
+  const { data: roles, error: rolesError } = await supabase
+    .from("user_roles")
+    .select("role, organization_id, is_active")
+    .eq("user_id", userId)
+    .eq("is_active", true);
 
-  if (profileError) {
-    console.error("[getUserRole] Profile query failed:", {
-      message: profileError.message,
-      code: (profileError as { code?: string }).code,
-      details: (profileError as { details?: string }).details,
-      hint: (profileError as { hint?: string }).hint,
+  if (rolesError) {
+    console.error("[getUserRole] user_roles query failed:", {
+      message: rolesError.message,
+      code: (rolesError as { code?: string }).code,
+      details: (rolesError as { details?: string }).details,
+      hint: (rolesError as { hint?: string }).hint,
       userId,
     });
     return { success: false, role: null, error: "Unable to retrieve user profile" };
   }
 
-  if (!profile) {
-    console.error("[getUserRole] Profile not found (no error returned, possible RLS policy issue):", {
+  if (!roles || roles.length === 0) {
+    console.error("[getUserRole] No active role found for user (none in user_roles or RLS blocked):", {
       userId,
     });
     return { success: false, role: null, error: "Unable to retrieve user profile" };
   }
 
-  if (profile.is_super_admin) {
+  // Super admin takes precedence over any organization-level role.
+  if (roles.some((r) => r.role === "super_admin")) {
     return { success: true, role: "super_admin", error: null };
   }
 
-  // Check organization_users for org-level role (org_admin, fundraiser/solicitor)
-  // Also join organizations to verify the org is active.
-  // NOTE: Supabase FK joins return arrays; we take the first element.
-  const { data: orgUser } = await supabase
-    .from("organization_users")
-    .select("role, organizations(status)")
-    .eq("user_id", userId)
-    .eq("status", "active")
-    .limit(1)
-    .single();
-
-  if (orgUser) {
-    // Supabase infers FK join results as arrays; normalise to a single record.
-    const orgRecordRaw = orgUser.organizations;
-    const orgRecord = Array.isArray(orgRecordRaw)
-      ? (orgRecordRaw[0] as { status: string } | undefined) ?? null
-      : (orgRecordRaw as { status: string } | null);
-    const orgStatus = orgRecord?.status;
-    if (orgStatus === "inactive") {
-      return {
-        success: false,
-        role: null,
-        error:
-          "Your organization's account has been deactivated. Contact your administrator.",
-      };
-    }
-  }
-
-  const role = orgUser?.role ?? "solicitor";
+  // Otherwise use the first active organization role (e.g. organization_admin).
+  const role = roles[0].role ?? "solicitor";
 
   return { success: true, role, error: null };
 }

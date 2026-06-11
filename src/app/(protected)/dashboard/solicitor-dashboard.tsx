@@ -15,14 +15,16 @@ interface DonorRow {
   first_name: string;
   last_name: string;
   score: number | null;
+  // SCHEMA-GAP: donors has no `tier` column in the live schema. Kept on the
+  // view-model (always null) so the existing Tier JSX renders "—" unchanged.
   tier: string | null;
 }
 
 interface MoveRow {
   id: string;
-  title: string;
+  name: string;
   due_date: string;
-  status: "pending" | "completed";
+  is_completed: boolean;
   donor_id: string;
   donorName: string;
   displayStatus: "pending" | "overdue" | "completed";
@@ -157,7 +159,7 @@ function MovesCard({ moves }: { moves: MoveRow[] }) {
                   }`}
                 >
                   <span className="min-w-0">
-                    <span className="font-medium block truncate">{move.title}</span>
+                    <span className="font-medium block truncate">{move.name}</span>
                     <span className="text-muted-foreground text-xs truncate block">
                       {move.donorName}
                     </span>
@@ -214,53 +216,76 @@ export default async function SolicitorDashboard({
 }: SolicitorDashboardProps) {
   const supabase = await createServerClient();
 
-  // ── Fetch assigned donors (max 10, ordered by score DESC) ──────────────────
-  const { count: donorCount } = await supabase
-    .from("donors")
-    .select("id", { count: "exact", head: true })
+  // The live schema identifies a solicitor by their user_roles.id (NOT the auth
+  // user id). donors.primary_solicitor_id and moves.assigned_to both reference
+  // user_roles.id. The `userId` prop passed from dashboard/page.tsx is the auth
+  // user id, so resolve the corresponding active user_roles.id for this org.
+  // SCHEMA-GAP: dashboard/page.tsx (outside the editable set) still passes the
+  // auth user id as `userId`; ideally it would pass organizationUser.id directly.
+  const { data: roleRow } = await supabase
+    .from("user_roles")
+    .select("id")
+    .eq("user_id", userId)
     .eq("organization_id", organizationId)
-    .eq("assigned_solicitor_id", userId);
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+
+  const solicitorRoleId = (roleRow as { id: string } | null)?.id ?? null;
+
+  // ── Fetch assigned donors (max 10, ordered by score DESC) ──────────────────
+  const { count: donorCount } = solicitorRoleId
+    ? await supabase
+        .from("donors")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", organizationId)
+        .eq("primary_solicitor_id", solicitorRoleId)
+    : { count: 0 };
 
   const totalDonorCount = donorCount ?? 0;
 
-  const { data: donorsRaw } = await supabase
-    .from("donors")
-    .select("id, first_name, last_name, score, tier")
-    .eq("organization_id", organizationId)
-    .eq("assigned_solicitor_id", userId)
-    .order("score", { ascending: false, nullsFirst: false })
-    .limit(10);
+  const { data: donorsRaw } = solicitorRoleId
+    ? await supabase
+        .from("donors")
+        .select("id, first_name, last_name, total_score")
+        .eq("organization_id", organizationId)
+        .eq("primary_solicitor_id", solicitorRoleId)
+        .order("total_score", { ascending: false, nullsFirst: false })
+        .limit(10)
+    : { data: [] };
 
   const donors: DonorRow[] = (
     (donorsRaw ?? []) as Array<{
       id: string;
       first_name: string;
       last_name: string;
-      score: number | null;
-      tier: string | null;
+      total_score: number | null;
     }>
   ).map((d) => ({
     id: d.id,
     first_name: d.first_name,
     last_name: d.last_name,
-    score: d.score,
-    tier: d.tier,
+    score: d.total_score,
+    // SCHEMA-GAP: no `tier` column on donors; always null.
+    tier: null,
   }));
 
   // ── Fetch pending moves (ordered by due_date ASC) ─────────────────────────
-  const { data: movesRaw } = await supabase
-    .from("moves")
-    .select("id, title, due_date, status, donor_id")
-    .eq("organization_id", organizationId)
-    .eq("solicitor_id", userId)
-    .eq("status", "pending")
-    .order("due_date", { ascending: true });
+  const { data: movesRaw } = solicitorRoleId
+    ? await supabase
+        .from("moves")
+        .select("id, name, due_date, is_completed, donor_id")
+        .eq("organization_id", organizationId)
+        .eq("assigned_to", solicitorRoleId)
+        .eq("is_completed", false)
+        .order("due_date", { ascending: true })
+    : { data: [] };
 
   const rawMoves = (movesRaw ?? []) as Array<{
     id: string;
-    title: string;
+    name: string;
     due_date: string;
-    status: "pending" | "completed";
+    is_completed: boolean;
     donor_id: string;
   }>;
 
@@ -288,15 +313,20 @@ export default async function SolicitorDashboard({
     }
   }
 
-  const moves: MoveRow[] = rawMoves.map((m) => ({
-    id: m.id,
-    title: m.title,
-    due_date: m.due_date,
-    status: m.status,
-    donor_id: m.donor_id,
-    donorName: moveDonorMap.get(m.donor_id) ?? "Unknown Donor",
-    displayStatus: getDisplayStatus(m),
-  }));
+  const moves: MoveRow[] = rawMoves.map((m) => {
+    // getDisplayStatus (in @/lib/move-utils, outside the editable set) expects a
+    // legacy `status` string; derive it from the live `is_completed` boolean.
+    const status = m.is_completed ? "completed" : "pending";
+    return {
+      id: m.id,
+      name: m.name,
+      due_date: m.due_date,
+      is_completed: m.is_completed,
+      donor_id: m.donor_id,
+      donorName: moveDonorMap.get(m.donor_id) ?? "Unknown Donor",
+      displayStatus: getDisplayStatus({ status, due_date: m.due_date }),
+    };
+  });
 
   const displayName = firstName ? `Welcome back, ${firstName}` : "Welcome back";
 

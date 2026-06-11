@@ -29,40 +29,29 @@ export default async function CalendarPage() {
   // ── Fetch org solicitors for admin filter dropdown ──────────────────────────
   let solicitorOptions: SolicitorOption[] = [];
   if (isAdmin) {
+    // In the live schema, solicitors are rows in `user_roles`. The dropdown's
+    // option id must be user_roles.id, since moves.assigned_to references it.
+    // SCHEMA-GAP: user_roles.role enum is only 'super_admin' |
+    // 'organization_admin' (no 'solicitor'), so we list all active org members
+    // rather than filtering on role === 'solicitor'.
     const { data: orgUsers } = await supabase
-      .from("organization_users")
-      .select("user_id, role")
+      .from("user_roles")
+      .select("id, full_name, email")
       .eq("organization_id", organizationId)
-      .eq("status", "active")
-      .eq("role", "solicitor");
+      .eq("is_active", true);
 
-    const solicitorIds = (
-      (orgUsers ?? []) as Array<{ user_id: string; role: string }>
-    ).map((ou) => ou.user_id);
+    solicitorOptions = (
+      (orgUsers ?? []) as Array<{
+        id: string;
+        full_name: string | null;
+        email: string | null;
+      }>
+    ).map((u) => ({
+      id: u.id,
+      name: u.full_name || u.email || u.id,
+    }));
 
-    if (solicitorIds.length > 0) {
-      const { data: solProfiles } = await supabase
-        .from("profiles")
-        .select("id, first_name, last_name, email")
-        .in("id", solicitorIds);
-
-      solicitorOptions = (
-        (solProfiles ?? []) as Array<{
-          id: string;
-          first_name: string | null;
-          last_name: string | null;
-          email: string | null;
-        }>
-      ).map((p) => ({
-        id: p.id,
-        name:
-          [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-          p.email ||
-          p.id,
-      }));
-
-      solicitorOptions.sort((a, b) => a.name.localeCompare(b.name));
-    }
+    solicitorOptions.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   // ── Fetch moves ─────────────────────────────────────────────────────────────
@@ -70,13 +59,18 @@ export default async function CalendarPage() {
   // We load all non-null due_date moves so the client can navigate freely.
   let movesQuery = supabase
     .from("moves")
-    .select("id, title, due_date, status, donor_id, solicitor_id")
+    .select("id, name, due_date, is_completed, donor_id, assigned_to")
     .eq("organization_id", organizationId)
     .not("due_date", "is", null);
 
-  // Solicitors only see their own moves (enforced by RLS + explicit filter)
+  // Solicitors only see their own moves (enforced by RLS + explicit filter).
+  // moves.assigned_to references user_roles.id, so filter on the current user's
+  // user_roles.id (organizationUser.id), NOT the auth user id.
   if (!isAdmin) {
-    movesQuery = movesQuery.eq("solicitor_id", currentUser.user.id);
+    movesQuery = movesQuery.eq(
+      "assigned_to",
+      currentUser.organizationUser?.id ?? ""
+    );
   }
 
   const { data: movesRaw } = await movesQuery.order("due_date", {
@@ -85,11 +79,11 @@ export default async function CalendarPage() {
 
   const rawMoves = (movesRaw ?? []) as Array<{
     id: string;
-    title: string;
+    name: string;
     due_date: string;
-    status: "pending" | "completed";
+    is_completed: boolean;
     donor_id: string;
-    solicitor_id: string;
+    assigned_to: string;
   }>;
 
   // ── Fetch donor names ───────────────────────────────────────────────────────
@@ -123,16 +117,18 @@ export default async function CalendarPage() {
   const moves: CalendarMove[] = rawMoves.map((m) => {
     const [y, mo, d] = m.due_date.split("-").map(Number);
     const dueDate = new Date(y, mo - 1, d);
-    const isOverdue = m.status === "pending" && dueDate < today;
+    const isOverdue = !m.is_completed && dueDate < today;
 
+    // CalendarMove (in calendar-view, outside the editable set) uses the legacy
+    // `title`/`status` fields; map from the live `name`/`is_completed` columns.
     return {
       id: m.id,
-      title: m.title,
+      title: m.name,
       donorName: donorMap.get(m.donor_id) ?? "Unknown Donor",
       due_date: m.due_date,
-      status: m.status,
+      status: m.is_completed ? "completed" : "pending",
       isOverdue,
-      solicitorId: m.solicitor_id,
+      solicitorId: m.assigned_to,
     };
   });
 

@@ -1,12 +1,11 @@
 import { getUserRole } from "../actions";
 
-// Mock the server client
+// Mock the server client. Roles are read from `user_roles` via
+// .from("user_roles").select(...).eq("user_id", id).eq("is_active", true)
+// which resolves to { data: rows[], error }.
 const mockGetUser = jest.fn();
 const mockFrom = jest.fn();
-const mockSelect = jest.fn();
-const mockEq = jest.fn();
-const mockSingle = jest.fn();
-const mockLimit = jest.fn();
+const mockRolesResult = jest.fn();
 
 jest.mock("@/lib/supabase/server", () => ({
   createServerClient: jest.fn().mockResolvedValue({
@@ -16,28 +15,12 @@ jest.mock("@/lib/supabase/server", () => ({
     from: (...args: unknown[]) => {
       mockFrom(...args);
       return {
-        select: (...sArgs: unknown[]) => {
-          mockSelect(...sArgs);
-          return {
-            eq: (...eArgs: unknown[]) => {
-              mockEq(...eArgs);
-              return {
-                single: () => mockSingle(),
-                eq: (...e2Args: unknown[]) => {
-                  mockEq(...e2Args);
-                  return {
-                    limit: (...lArgs: unknown[]) => {
-                      mockLimit(...lArgs);
-                      return {
-                        single: () => mockSingle(),
-                      };
-                    },
-                  };
-                },
-              };
-            },
-          };
-        },
+        select: () => ({
+          eq: () => ({
+            // second .eq() resolves the query to the rows array
+            eq: () => mockRolesResult(),
+          }),
+        }),
       };
     },
   }),
@@ -60,13 +43,13 @@ describe("getUserRole", () => {
     });
   });
 
-  it("returns super_admin role when profile is_super_admin is true", async () => {
+  it("returns super_admin when a super_admin role row exists", async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { id: "user-123" } },
       error: null,
     });
-    mockSingle.mockResolvedValue({
-      data: { is_super_admin: true },
+    mockRolesResult.mockResolvedValue({
+      data: [{ role: "super_admin", organization_id: null, is_active: true }],
       error: null,
     });
 
@@ -77,17 +60,17 @@ describe("getUserRole", () => {
       role: "super_admin",
       error: null,
     });
-    expect(mockFrom).toHaveBeenCalledWith("profiles");
+    expect(mockFrom).toHaveBeenCalledWith("user_roles");
   });
 
-  it("returns error when profile cannot be retrieved", async () => {
+  it("returns error when the user_roles query fails", async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { id: "user-123" } },
       error: null,
     });
-    mockSingle.mockResolvedValue({
+    mockRolesResult.mockResolvedValue({
       data: null,
-      error: { message: "Not found" },
+      error: { message: "permission denied" },
     });
 
     const result = await getUserRole();
@@ -99,52 +82,59 @@ describe("getUserRole", () => {
     });
   });
 
-  it("returns org_admin role from organization_users", async () => {
+  it("returns error when the user has no active role rows", async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { id: "user-123" } },
       error: null,
     });
-    // First single() call: profiles query
-    mockSingle
-      .mockResolvedValueOnce({
-        data: { is_super_admin: false },
-        error: null,
-      })
-      // Second single() call: organization_users query
-      .mockResolvedValueOnce({
-        data: { role: "org_admin" },
-        error: null,
-      });
+    mockRolesResult.mockResolvedValue({ data: [], error: null });
+
+    const result = await getUserRole();
+
+    expect(result).toEqual({
+      success: false,
+      role: null,
+      error: "Unable to retrieve user profile",
+    });
+  });
+
+  it("returns the organization role for a non-super-admin member", async () => {
+    mockGetUser.mockResolvedValue({
+      data: { user: { id: "user-123" } },
+      error: null,
+    });
+    mockRolesResult.mockResolvedValue({
+      data: [{ role: "organization_admin", organization_id: "org-1", is_active: true }],
+      error: null,
+    });
 
     const result = await getUserRole();
 
     expect(result).toEqual({
       success: true,
-      role: "org_admin",
+      role: "organization_admin",
       error: null,
     });
   });
 
-  it("defaults to solicitor role when no org user found", async () => {
+  it("prefers super_admin when the user has both super_admin and org rows", async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { id: "user-123" } },
       error: null,
     });
-    mockSingle
-      .mockResolvedValueOnce({
-        data: { is_super_admin: false },
-        error: null,
-      })
-      .mockResolvedValueOnce({
-        data: null,
-        error: null,
-      });
+    mockRolesResult.mockResolvedValue({
+      data: [
+        { role: "organization_admin", organization_id: "org-1", is_active: true },
+        { role: "super_admin", organization_id: null, is_active: true },
+      ],
+      error: null,
+    });
 
     const result = await getUserRole();
 
     expect(result).toEqual({
       success: true,
-      role: "solicitor",
+      role: "super_admin",
       error: null,
     });
   });

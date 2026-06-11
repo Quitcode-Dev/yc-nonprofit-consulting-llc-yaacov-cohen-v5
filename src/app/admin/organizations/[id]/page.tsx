@@ -11,10 +11,10 @@ import { OrgDeactivation } from "./org-deactivation";
 interface OrganizationRow {
   id: string;
   name: string;
-  contact_name: string | null;
-  contact_email: string | null;
-  status: "active" | "inactive";
   created_at: string;
+  // SCHEMA-GAP: organizations has no status column
+  // SCHEMA-GAP: organizations has no contact_name column
+  // SCHEMA-GAP: organizations has no contact_email column
 }
 
 function formatDate(dateString: string): string {
@@ -37,9 +37,10 @@ export default async function OrganizationDetailPage({
   const supabase = await createServerClient();
 
   // Fetch organization by ID
+  // SCHEMA-GAP: organizations has no status/contact_name/contact_email columns
   const { data: org, error: orgError } = await supabase
     .from("organizations")
-    .select("id, name, contact_name, contact_email, status, created_at")
+    .select("id, name, created_at")
     .eq("id", id)
     .single();
 
@@ -49,9 +50,15 @@ export default async function OrganizationDetailPage({
 
   const organization = org as OrganizationRow;
 
-  // Count users in this organization
+  // SCHEMA-GAP: organizations has no status column — treat all orgs as active.
+  const orgStatus: "active" | "inactive" = "active";
+  // SCHEMA-GAP: organizations has no contact_name / contact_email columns.
+  const contactName: string | null = null;
+  const contactEmail: string | null = null;
+
+  // Count members in this organization (user_roles is the membership table).
   const { count: userCount } = await supabase
-    .from("organization_users")
+    .from("user_roles")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", id);
 
@@ -67,8 +74,8 @@ export default async function OrganizationDetailPage({
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{organization.name}</h1>
-        <Badge variant={organization.status === "active" ? "success" : "muted"}>
-          {organization.status}
+        <Badge variant={orgStatus === "active" ? "success" : "muted"}>
+          {orgStatus}
         </Badge>
       </div>
 
@@ -92,11 +99,9 @@ export default async function OrganizationDetailPage({
               </p>
               <div className="mt-1">
                 <Badge
-                  variant={
-                    organization.status === "active" ? "success" : "muted"
-                  }
+                  variant={orgStatus === "active" ? "success" : "muted"}
                 >
-                  {organization.status}
+                  {orgStatus}
                 </Badge>
               </div>
             </div>
@@ -106,7 +111,7 @@ export default async function OrganizationDetailPage({
                 Contact Name
               </p>
               <p className="text-sm mt-1">
-                {organization.contact_name ?? (
+                {contactName ?? (
                   <span className="text-muted-foreground italic">—</span>
                 )}
               </p>
@@ -117,12 +122,12 @@ export default async function OrganizationDetailPage({
                 Contact Email
               </p>
               <p className="text-sm mt-1">
-                {organization.contact_email ? (
+                {contactEmail ? (
                   <a
-                    href={`mailto:${organization.contact_email}`}
+                    href={`mailto:${contactEmail}`}
                     className="text-primary underline-offset-4 hover:underline"
                   >
-                    {organization.contact_email}
+                    {contactEmail}
                   </a>
                 ) : (
                   <span className="text-muted-foreground italic">—</span>
@@ -154,7 +159,7 @@ export default async function OrganizationDetailPage({
         <AccessAsAdminButton organizationId={organization.id} />
         <OrgDeactivation
           organizationId={organization.id}
-          status={organization.status}
+          status={orgStatus}
         />
       </div>
     </div>
