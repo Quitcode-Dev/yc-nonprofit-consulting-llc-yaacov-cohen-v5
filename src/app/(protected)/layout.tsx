@@ -42,13 +42,15 @@ export default async function ProtectedLayout({
   }
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen bg-background text-foreground dark:bg-background dark:text-foreground">
       {impersonatedOrgName && (
         <ImpersonationBanner orgName={impersonatedOrgName} />
       )}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar role={role} user={sidebarUser} />
-        <main className="flex-1 overflow-auto p-6">{children}</main>
+        <main className="flex-1 overflow-auto p-6 bg-background text-foreground dark:bg-background dark:text-foreground">
+          {children}
+        </main>
       </div>
       <FeedbackButton />
     </div>

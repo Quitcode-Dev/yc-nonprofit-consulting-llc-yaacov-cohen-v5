@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createBrowserClient } from "@/lib/supabase/client";
+import Header from "@/components/Header";
 
 interface NavItem {
   label: string;
@@ -66,9 +67,7 @@ export default function Sidebar({ role, user }: SidebarProps) {
 
   return (
     <aside className="w-64 bg-card border-r border-border flex flex-col h-full">
-      <div className="p-4 border-b border-border">
-        <h2 className="text-lg font-semibold">Donor Management</h2>
-      </div>
+      <Header />
 
       <nav className="flex-1 p-4">
         <ul className="space-y-1">
